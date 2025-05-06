@@ -1,0 +1,4 @@
+cron:
+  - description: "system tic"
+    url: /systemtic
+    schedule: every 15 minutes synchronized
