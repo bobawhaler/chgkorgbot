@@ -97,12 +97,43 @@ def unpin_message(chat_id, message_thread_id, message_id):
     return response
 
 
-def create_poll(chat_id, message_thread_id, title, chosen_tourns):
+def create_game_poll(chat_id, message_thread_id, title, chosen_tourns):
     params = {
         "chat_id": str(chat_id),
         "question": title,
         "options": chosen_tourns,
         "is_anonymous": False,
+        "allows_multiple_answers": True,
+        "protect_content": True,
+    }
+    if message_thread_id:
+        params["message_thread_id"] = message_thread_id
+    response = requests.post(
+        BASE_URL + "sendPoll",
+        json=params,
+    )
+    if not response.ok:
+        print(f"Error creating poll {response.status_code}, {response.reason}")
+    return response
+
+
+def create_feedback_poll(chat_id, message_thread_id):
+    params = {
+        "chat_id": str(chat_id),
+        "question": "Сыгранный пакет покался вам...",
+        "options": [
+            "Простым",
+            "Средним по сложности",
+            "Сложным",
+            "Скучным",
+            "Нормальным по интересности",
+            "Интересным",
+            "Слабым по редактуре",
+            "Средним по редактуре",
+            "Крутым по редактуре",
+            "Нет мнения/посмотреть ответы",
+        ],
+        "is_anonymous": True,
         "allows_multiple_answers": True,
         "protect_content": True,
     }

@@ -205,7 +205,7 @@ def command():
                         )
                 else:
                     title = "Выбираем"
-                resp = telegram_api.create_poll(
+                resp = telegram_api.create_game_poll(
                     chat_id, thread_id, title, chosen_tourns
                 )
                 if resp.ok:
@@ -219,6 +219,8 @@ def command():
                             helpers.add_task(
                                 chat_id, message_id, end_time_ts, filtered_tourn_ids[:8]
                             )
+            elif inp[0] == "/feedback":
+                resp = telegram_api.create_feedback_poll(chat_id, thread_id)
             elif inp[0] == "/setupchat":
                 timezone = ""
                 if len(inp) > 1:
@@ -237,7 +239,7 @@ def command():
                 telegram_api.send_message(
                     chat_id,
                     thread_id,
-                    "/setupchat <timezone> [venue_id1,venue_id2...] - настройка часового пояса чата и мониторинга заявок на списке площадок\n/tourns <YYYYMMDD>|<дата и время турнира> - список турниров на дату (и время)\n/rtourns <YYYYMMDD>|<дата и время турнира> - список рейтингуемых турниров на дату (и время)\n/poll <tourn_1,tourn_2,...> [title] [до <время окончания>]- создание голосовалки из 2-8 перечисленных номеров турниров\n/stop - как reply на сообщение с опросом, завершает его и подводит итоги\n/cancel - как reply на сообщение с опросом, завершает его без подведения итогов\n/help - эта подсказка",
+                    "/setupchat <timezone> [venue_id1,venue_id2...] - настройка часового пояса чата и мониторинга заявок на списке площадок\n/tourns <YYYYMMDD>|<дата и время турнира> - список турниров на дату (и время)\n/rtourns <YYYYMMDD>|<дата и время турнира> - список рейтингуемых турниров на дату (и время)\n/poll <tourn_1,tourn_2,...> [title] [до <время окончания>]- создание голосовалки из 2-8 перечисленных номеров турниров\n/stop - как reply на сообщение с опросом, завершает его и подводит итоги\n/cancel - как reply на сообщение с опросом, завершает его без подведения итогов\n/feedback - опрос впечатлений о сыгранном пакете\n/help - эта подсказка",
                 )
     except Exception as e:
         print(f"Error in command processing {e}")
