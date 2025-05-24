@@ -120,7 +120,7 @@ def create_game_poll(chat_id, message_thread_id, title, chosen_tourns):
 def create_feedback_poll(chat_id, message_thread_id):
     params = {
         "chat_id": str(chat_id),
-        "question": "Сыгранный пакет покался вам...",
+        "question": "Сыгранный пакет показался вам...",
         "options": [
             "Простым",
             "Средним по сложности",
