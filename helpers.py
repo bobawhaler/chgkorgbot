@@ -48,6 +48,7 @@ def get_person_form(person):
 def parse_date(input_date, timezone):
     try:
         result_date = datetime.datetime.strptime(input_date, "%Y%m%d").date()
+        print(result_date)
         return result_date, False
     except:
         normal_date = (
@@ -69,6 +70,7 @@ def parse_date(input_date, timezone):
                 "NORMALIZE": True,
             },
         )
+        print(result_date)
         if not result_date:
             return datetime.datetime.now().date(), False
         # Crunch for dateparser day of week bug

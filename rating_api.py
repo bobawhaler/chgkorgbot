@@ -106,7 +106,7 @@ def get_new_sync_requests(venue_id):
 
 def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=False):
     from_date = (tourn_date - relativedelta(months=1)).strftime("%Y-%m-%d")
-    # print(d, fd)
+    print(tourn_date, from_date)
     result = []
     played_tourns_ids = played_tourns.keys()
     played_syncs = {}
