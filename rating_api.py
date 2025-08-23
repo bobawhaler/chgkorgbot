@@ -141,7 +141,8 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
             if (
                 "difficultyForecast" in tourn
                 and tourn["difficultyForecast"]
-                and tourn["difficultyForecast"] < 3
+                and tourn["difficultyForecast"]
+                < helpers.get_chat_min_difficulty(chat_id)
                 or only_rated
                 and ("maiiRating" not in tourn or not tourn["maiiRating"])
             ):

@@ -155,37 +155,36 @@ def command():
             elif inp[0] == "/print" and len(inp) > 1:
                 tourns = helpers.fetch_data(chat_id)
                 telegram_api.send_message(chat_id, thread_id, tourns[int(inp[1]) - 1])
-            elif inp[0] == "/stop":
+            elif inp[0] == "/stop" or inp[0] == "/cancel":
+                message_id = None
                 if "reply_to_message" in body["message"]:
                     message_id = body["message"]["reply_to_message"]["message_id"]
-                    task = helpers.pop_task(chat_id, message_id)
-                    tourn_ids = []
-                    if task:
-                        tourn_ids = task.get("tourn_ids", [])
-                        message_id = task.get("message_id", None)
-                    if message_id:
-                        telegram_api.finalize_poll(
+                task, multiple_candidates = helpers.pop_task(chat_id, message_id)
+                print(task)
+                tourn_ids = []
+                if task:
+                    tourn_ids = task.get("tourn_ids", [])
+                    message_id = task.get("message_id", None)
+                if message_id:
+                    telegram_api.finalize_poll(
+                        chat_id,
+                        thread_id,
+                        message_id,
+                        tourn_ids,
+                        with_results=(inp[0] == "/stop"),
+                    )
+                else:
+                    if multiple_candidates:
+                        telegram_api.send_message(
                             chat_id,
                             thread_id,
-                            message_id,
-                            tourn_ids,
-                            with_results=True,
+                            "Ошибка: несколько открытых голосований. Пожалуйста, используйте команду в ответ на сообщение с голосованием.",
                         )
-            elif inp[0] == "/cancel":
-                if "reply_to_message" in body["message"]:
-                    message_id = body["message"]["reply_to_message"]["message_id"]
-                    task = helpers.pop_task(chat_id, message_id)
-                    tourn_ids = []
-                    if task:
-                        tourn_ids = task.get("tourn_ids", [])
-                        message_id = task.get("message_id", None)
-                    if message_id:
-                        telegram_api.finalize_poll(
+                    else:
+                        telegram_api.send_message(
                             chat_id,
                             thread_id,
-                            message_id,
-                            tourn_ids,
-                            with_results=False,
+                            "Ошибка: не найдено открытых голосований. Если такие есть, пожалуйста, используйте команду в ответ на сообщение с голосованием.",
                         )
             elif inp[0] == "/poll" and len(inp) > 1:
                 tourns = helpers.fetch_data(chat_id)
@@ -208,9 +207,10 @@ def command():
                             filtered_tourn_ids.append(tourn["id"])
                         else:
                             filtered_tourns.append(tourn)
-                chosen_tourns = filtered_tourns[:8]
-                chosen_tourns.append("буду играть любой")
-                chosen_tourns.append("не буду играть")
+                chosen_tourns = filtered_tourns[
+                    : (10 - helpers.COMMON_POLL_OPTIONS.__len__())
+                ]
+                chosen_tourns = chosen_tourns + helpers.COMMON_POLL_OPTIONS
                 closing_time = None
                 if len(inp) > 2:
                     title = " ".join(inp[2:])
@@ -245,18 +245,23 @@ def command():
                 venues = ""
                 if len(inp) > 2:
                     venues = inp[2]
+                min_difficulty = None
+                if len(inp) > 3:
+                    min_difficulty = float(inp[3])
                 thread_id = None
                 if (
                     "is_forum" in body["message"]["chat"]
                     and body["message"]["chat"]["is_forum"]
                 ):
                     thread_id = body["message"].get("message_thread_id", None)
-                helpers.make_config(chat_id, timezone, venues, thread_id)
+                helpers.make_config(
+                    chat_id, timezone, venues, min_difficulty, thread_id
+                )
             elif inp[0] == "/help":
                 telegram_api.send_message(
                     chat_id,
                     thread_id,
-                    "/setupchat <timezone> [venue_id1,venue_id2...] - настройка часового пояса чата и мониторинга заявок на списке площадок\n/tourns <YYYYMMDD>|<дата и время турнира> - список турниров на дату (и время)\n/rtourns <YYYYMMDD>|<дата и время турнира> - список рейтингуемых турниров на дату (и время)\n/poll <tourn_1,tourn_2,...> [title] [до <время окончания>]- создание голосовалки из 2-8 перечисленных номеров турниров\n/stop - как reply на сообщение с опросом, завершает его и подводит итоги\n/cancel - как reply на сообщение с опросом, завершает его без подведения итогов\n/feedback - опрос впечатлений о сыгранном пакете\n/help - эта подсказка",
+                    "/setupchat <timezone>[ venue_id1,venue_id2...][ min_difficulty] - настройка часового пояса чата и мониторинга заявок на списке площадок и минимальной сложности турниров\n/tourns <YYYYMMDD>|<дата и время турнира> - список турниров на дату (и время)\n/rtourns <YYYYMMDD>|<дата и время турнира> - список рейтингуемых турниров на дату (и время)\n/poll <tourn_1,tourn_2,...> [title] [до <время окончания>]- создание голосовалки из 2-8 перечисленных номеров турниров\n/stop - как reply на сообщение с опросом, завершает его и подводит итоги\n/cancel - как reply на сообщение с опросом, завершает его без подведения итогов\n/feedback - опрос впечатлений о сыгранном пакете\n/help - эта подсказка",
                 )
     except Exception as e:
         print(f"Error in command processing {e}")

@@ -13,6 +13,9 @@ OBFUSCATION_TOKEN = os.environ.get("OBFUSCATION_TOKEN")
 
 DEFAULT_TIMEZONE = "Europe/Berlin"
 DEFAULT_VENUE_ID = 3053
+DEFAULT_MIN_DIFFICULTY = 3.0
+
+COMMON_POLL_OPTIONS = ["буду играть любой", "не буду играть"]
 
 
 def get_datastore_client():
@@ -236,7 +239,7 @@ def pop_task(chat_id, message_id):
         if return_task:
             entity.update({"tasks": new_tasks})
             datastore_client.put(entity)
-    return return_task
+    return return_task, len(task_candidates) > 1
 
 
 def add_task(chat_id, message_id, end_time_ts, tourn_ids):
@@ -273,7 +276,7 @@ def add_task(chat_id, message_id, end_time_ts, tourn_ids):
         datastore_client.put(entity)
 
 
-def make_config(chat_id, timezone, venues, thread_id):
+def make_config(chat_id, timezone, venues, min_difficulty, thread_id):
     datastore_client = get_datastore_client()
     entity = datastore_client.get(datastore_client.key(PROJECT_ID, "configs"))
     if not entity:
@@ -286,6 +289,9 @@ def make_config(chat_id, timezone, venues, thread_id):
                 "timezone": timezone,
                 "venues": [v.strip() for v in venues.split(",")],
                 "thread_id": thread_id,
+                "min_difficulty": (
+                    min_difficulty if min_difficulty else DEFAULT_MIN_DIFFICULTY
+                ),
             }
         }
     )
@@ -309,6 +315,15 @@ def get_chat_timezone(chat_id):
     return DEFAULT_TIMEZONE
 
 
+def get_chat_min_difficulty(chat_id):
+    datastore_client = get_datastore_client()
+    entity = datastore_client.get(datastore_client.key(PROJECT_ID, "configs"))
+    key = str(chat_id)
+    if entity and key in entity and "min_difficulty" in entity[key]:
+        return entity[key]["min_difficulty"]
+    return DEFAULT_MIN_DIFFICULTY
+
+
 def get_chat_venues(chat_id):
     datastore_client = get_datastore_client()
     entity = datastore_client.get(datastore_client.key(PROJECT_ID, "configs"))
@@ -317,8 +332,10 @@ def get_chat_venues(chat_id):
         return entity[key]["venues"]
     return [DEFAULT_VENUE_ID]
 
+
 def get_default_poll_closing_time():
     return datetime.datetime.now() + relativedelta(months=1)
+
 
 def get_played_tourns(venue_id, chat_id):
     datastore_client = get_datastore_client()

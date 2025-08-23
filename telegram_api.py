@@ -177,7 +177,9 @@ def finalize_poll(chat_id, message_thread_id, message_id, tourn_ids, with_result
             options = result["result"]["options"]
             max_count = 0
             winners = []
-            for i, option in enumerate(options[:-2]):
+            for i, option in enumerate(options):
+                if option["text"] in helpers.COMMON_POLL_OPTIONS:
+                    continue
                 print(option["voter_count"], option["text"])
                 tourn_id = tourn_ids[i] if len(tourn_ids) > i else None
                 if option["voter_count"] > max_count:
