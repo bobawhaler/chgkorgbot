@@ -120,6 +120,10 @@ def command():
                 tourn_date, with_time = helpers.parse_date(
                     " ".join(inp[1:]), helpers.get_chat_timezone(chat_id)
                 )
+                if with_time:
+                    header = f"Доступно на {tourn_date.strftime('%d.%m.%Y %H:%M')}:"
+                else:
+                    header = f"Доступно на {tourn_date.strftime('%d.%m.%Y')}:"
                 played_tourns = {}
                 if (
                     str(chat_id) in all_configs
@@ -146,7 +150,7 @@ def command():
                 telegram_api.send_multi_message(
                     chat_id,
                     thread_id,
-                    [f"{i+1}. {e}" for i, e in enumerate(tourns_to_show)],
+                    [header] + [f"{i+1}. {e}" for i, e in enumerate(tourns_to_show)],
                 )
             elif inp[0] == "/print" and len(inp) > 1:
                 tourns = helpers.fetch_data(chat_id)
@@ -158,13 +162,15 @@ def command():
                     tourn_ids = []
                     if task:
                         tourn_ids = task.get("tourn_ids", [])
-                    telegram_api.finalize_poll(
-                        chat_id,
-                        thread_id,
-                        message_id,
-                        tourn_ids,
-                        with_results=True,
-                    )
+                        message_id = task.get("message_id", None)
+                    if message_id:
+                        telegram_api.finalize_poll(
+                            chat_id,
+                            thread_id,
+                            message_id,
+                            tourn_ids,
+                            with_results=True,
+                        )
             elif inp[0] == "/cancel":
                 if "reply_to_message" in body["message"]:
                     message_id = body["message"]["reply_to_message"]["message_id"]
@@ -172,16 +178,26 @@ def command():
                     tourn_ids = []
                     if task:
                         tourn_ids = task.get("tourn_ids", [])
-                    telegram_api.finalize_poll(
-                        chat_id,
-                        thread_id,
-                        message_id,
-                        tourn_ids,
-                        with_results=False,
-                    )
+                        message_id = task.get("message_id", None)
+                    if message_id:
+                        telegram_api.finalize_poll(
+                            chat_id,
+                            thread_id,
+                            message_id,
+                            tourn_ids,
+                            with_results=False,
+                        )
             elif inp[0] == "/poll" and len(inp) > 1:
                 tourns = helpers.fetch_data(chat_id)
                 # print(f"Retrieved {tourns}")
+                user_chosen_idxs = [int(i) - 1 for i in inp[1].split(",")]
+                if not all(0 <= idx < len(tourns) for idx in user_chosen_idxs):
+                    telegram_api.send_message(
+                        chat_id,
+                        thread_id,
+                        "Ошибка: неверные номера турниров в списке.",
+                    )
+                    return ""
                 user_chosen_tourns = [tourns[int(i) - 1] for i in inp[1].split(",")]
                 filtered_tourns = []
                 filtered_tourn_ids = []
@@ -214,11 +230,12 @@ def command():
                     if "result" in message and "message_id" in message["result"]:
                         message_id = message["result"]["message_id"]
                         telegram_api.pin_message(chat_id, thread_id, message_id)
-                        if closing_time:
-                            end_time_ts = int(closing_time.timestamp())
-                            helpers.add_task(
-                                chat_id, message_id, end_time_ts, filtered_tourn_ids[:8]
-                            )
+                        if not closing_time:
+                            closing_time = helpers.get_default_poll_closing_time()
+                        end_time_ts = int(closing_time.timestamp())
+                        helpers.add_task(
+                            chat_id, message_id, end_time_ts, filtered_tourn_ids[:8]
+                        )
             elif inp[0] == "/feedback":
                 resp = telegram_api.create_feedback_poll(chat_id, thread_id)
             elif inp[0] == "/setupchat":

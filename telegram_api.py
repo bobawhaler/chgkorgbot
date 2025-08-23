@@ -162,7 +162,7 @@ def get_printable(tourn):
     if tourn[1]:
         url = f"https://rating.chgk.info/tournament/{tourn[1]}"
         return f'<a href="{url}">{tourn[0]}</a>'
-    return tourn[1]
+    return tourn[0]
 
 
 def finalize_poll(chat_id, message_thread_id, message_id, tourn_ids, with_results):

@@ -214,18 +214,28 @@ def remove_task(chat_id, message_id):
 
 
 def pop_task(chat_id, message_id):
-    return_task = None
+    task_candidates = []
     datastore_client = get_datastore_client()
     entity = datastore_client.get(datastore_client.key(PROJECT_ID, "tasks"))
+    return_task = None
     if entity and "tasks" in entity and entity["tasks"]:
         new_tasks = []
         for task in entity["tasks"]:
-            if task["chat_id"] != chat_id or task["message_id"] != message_id:
+            if task["chat_id"] != chat_id:
                 new_tasks.append(task)
             else:
-                return_task = task
-        entity.update({"tasks": new_tasks})
-        datastore_client.put(entity)
+                task_candidates.append(task)
+        if len(task_candidates) == 1:
+            return_task = task_candidates[0]
+        elif message_id and len(task_candidates) > 1:
+            for task in task_candidates:
+                if task["message_id"] == message_id:
+                    return_task = task
+                else:
+                    new_tasks.append(task)
+        if return_task:
+            entity.update({"tasks": new_tasks})
+            datastore_client.put(entity)
     return return_task
 
 
@@ -307,6 +317,8 @@ def get_chat_venues(chat_id):
         return entity[key]["venues"]
     return [DEFAULT_VENUE_ID]
 
+def get_default_poll_closing_time():
+    return datetime.datetime.now() + relativedelta(months=1)
 
 def get_played_tourns(venue_id, chat_id):
     datastore_client = get_datastore_client()
