@@ -40,7 +40,7 @@ def system_tic():
             thread_id,
             task["message_id"],
             task.get("tourn_ids", []),
-            with_results=True,
+            with_results=task.get("with_results", False),
         )
     for chat_id in all_configs:
         if "venues" not in all_configs[chat_id]:
@@ -230,11 +230,17 @@ def command():
                     if "result" in message and "message_id" in message["result"]:
                         message_id = message["result"]["message_id"]
                         telegram_api.pin_message(chat_id, thread_id, message_id)
+                        with_results = True
                         if not closing_time:
                             closing_time = helpers.get_default_poll_closing_time()
+                            with_results = False
                         end_time_ts = int(closing_time.timestamp())
                         helpers.add_task(
-                            chat_id, message_id, end_time_ts, filtered_tourn_ids[:8]
+                            chat_id,
+                            message_id,
+                            end_time_ts,
+                            filtered_tourn_ids[:8],
+                            with_results,
                         )
             elif inp[0] == "/feedback":
                 resp = telegram_api.create_feedback_poll(chat_id, thread_id)

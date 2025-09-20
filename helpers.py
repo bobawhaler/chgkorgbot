@@ -242,7 +242,7 @@ def pop_task(chat_id, message_id):
     return return_task, len(task_candidates) > 1
 
 
-def add_task(chat_id, message_id, end_time_ts, tourn_ids):
+def add_task(chat_id, message_id, end_time_ts, tourn_ids, with_results):
     datastore_client = get_datastore_client()
     entity = datastore_client.get(datastore_client.key(PROJECT_ID, "tasks"))
     new_tasks = []
@@ -255,6 +255,7 @@ def add_task(chat_id, message_id, end_time_ts, tourn_ids):
                 "message_id": message_id,
                 "end_time": end_time_ts,
                 "tourn_ids": tourn_ids,
+                "with_results": with_results,
             }
         )
         entity.update({"tasks": new_tasks})
