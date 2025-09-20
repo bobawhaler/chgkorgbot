@@ -31,7 +31,7 @@ def set_webhook():
 def system_tic():
     set_webhook()
     all_configs = helpers.get_all_configs()
-    for task in helpers.traverse_finished_tasks():
+    for task, multiple_candidates in helpers.traverse_finished_tasks():
         thread_id = None
         if str(task["chat_id"]) in all_configs:
             thread_id = all_configs[str(task["chat_id"])].get("thread_id", None)
@@ -41,6 +41,7 @@ def system_tic():
             task["message_id"],
             task.get("tourn_ids", []),
             with_results=task.get("with_results", False),
+            multiple_candidates=multiple_candidates,
         )
     for chat_id in all_configs:
         if "venues" not in all_configs[chat_id]:
@@ -172,6 +173,7 @@ def command():
                         message_id,
                         tourn_ids,
                         with_results=(inp[0] == "/stop"),
+                        multiple_candidates=multiple_candidates,
                     )
                 else:
                     if multiple_candidates:

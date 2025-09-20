@@ -31,7 +31,9 @@ def get_webhook():
     return requests.get(BASE_URL + "getWebhookInfo")
 
 
-def send_message(chat_id, message_thread_id, message, formatted=False):
+def send_message(
+    chat_id, message_thread_id, message, formatted=False, reply_to_message_id=None
+):
     params = {
         "chat_id": str(chat_id),
         "text": message,
@@ -41,6 +43,8 @@ def send_message(chat_id, message_thread_id, message, formatted=False):
         params["parse_mode"] = ParseMode.HTML
     if message_thread_id:
         params["message_thread_id"] = message_thread_id
+    if reply_to_message_id:
+        params["reply_to_message_id"] = reply_to_message_id
     # print(len(params["text"]))
     response = requests.post(
         BASE_URL + "sendMessage",
@@ -50,8 +54,16 @@ def send_message(chat_id, message_thread_id, message, formatted=False):
         print(f"Error sending message {response.status_code}, {response.reason}")
 
 
-def send_formatted_message(chat_id, message_thread_id, message):
-    send_message(chat_id, message_thread_id, message, formatted=True)
+def send_formatted_message(
+    chat_id, message_thread_id, message, reply_to_message_id=None
+):
+    send_message(
+        chat_id,
+        message_thread_id,
+        message,
+        formatted=True,
+        reply_to_message_id=reply_to_message_id,
+    )
 
 
 def send_multi_message(chat_id, message_thread_id, string_list):
@@ -165,7 +177,14 @@ def get_printable(tourn):
     return tourn[0]
 
 
-def finalize_poll(chat_id, message_thread_id, message_id, tourn_ids, with_results):
+def finalize_poll(
+    chat_id,
+    message_thread_id,
+    message_id,
+    tourn_ids,
+    with_results,
+    multiple_candidates=False,
+):
     unpin_message(chat_id, message_thread_id, message_id)
     resp = stop_poll(chat_id, message_thread_id, message_id)
     if not resp.ok:
@@ -192,10 +211,12 @@ def finalize_poll(chat_id, message_thread_id, message_id, tourn_ids, with_result
                     chat_id,
                     message_thread_id,
                     f"Победитель: {get_printable(winners[0])}",
+                    message_id if multiple_candidates else None,
                 )
             else:
                 send_formatted_message(
                     chat_id,
                     message_thread_id,
                     f'Победители: {", ".join([w[0] for w in winners])}.\nСлучайный выбор: {get_printable(random.choice(winners))}',
+                    message_id if multiple_candidates else None,
                 )

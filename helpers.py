@@ -193,15 +193,24 @@ def fetch_data(chat_id):
 def traverse_finished_tasks():
     datastore_client = get_datastore_client()
     entity = datastore_client.get(datastore_client.key(PROJECT_ID, "tasks"))
+    all_tasks = {}
     if entity and "tasks" in entity and entity["tasks"]:
         new_tasks = []
         for task in entity["tasks"]:
+            if task["chat_id"] not in all_tasks:
+                all_tasks[task["chat_id"]] = []
             if task["end_time"] <= int(datetime.datetime.now().timestamp()):
-                yield task
+                all_tasks[task["chat_id"]].append((task, True))
             else:
+                all_tasks[task["chat_id"]].append((task, False))
                 new_tasks.append(task)
         entity.update({"tasks": new_tasks})
         datastore_client.put(entity)
+    for chat_id in all_tasks:
+        for task, is_finished in all_tasks[chat_id]:
+            if not is_finished:
+                continue
+            yield task, len(all_tasks[chat_id]) > 1
 
 
 def remove_task(chat_id, message_id):
