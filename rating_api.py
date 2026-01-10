@@ -5,9 +5,10 @@ import requests
 import helpers
 import pytz
 
+API_URL = "https://api.rating.chgk.info"
 
 def get_tourn_by_id(tourn_id):
-    url = f"https://api.rating.chgk.net/tournaments/{tourn_id}"
+    url = f"{API_URL}/tournaments/{tourn_id}"
     response = requests.get(url, headers={"Accept": "application/json"})
     if not response.ok:
         print(
@@ -18,7 +19,7 @@ def get_tourn_by_id(tourn_id):
 
 
 def get_tourn_by_request(request_id, chat_id):
-    url = f"https://api.rating.chgk.net/tournament_synch_requests/{request_id}"
+    url = f"{API_URL}/tournament_synch_requests/{request_id}"
     response = requests.get(url, headers={"Accept": "application/json"})
     if not response.ok:
         print(
@@ -40,7 +41,7 @@ def get_sync_requests_ids(venue_id, months):
     if not venue_id:
         return result
     for i in range(1, 30):
-        url = f"https://api.rating.chgk.net/venues/{venue_id}/requests?page={i}&itemsPerPage=30&dateStart%5Bafter%5D={from_date}"
+        url = f"{API_URL}/venues/{venue_id}/requests?page={i}&itemsPerPage=30&dateStart%5Bafter%5D={from_date}"
         response = requests.get(url, headers={"Accept": "application/json"})
         if not response.ok:
             print(
@@ -70,7 +71,7 @@ def get_new_sync_requests(venue_id):
     if not venue_id:
         return result
     for i in range(1, 30):
-        url = f"https://api.rating.chgk.net/venues/{venue_id}/requests?page={i}&itemsPerPage=30&issuedAt%5Bafter%5D={from_date}"
+        url = f"{API_URL}/venues/{venue_id}/requests?page={i}&itemsPerPage=30&issuedAt%5Bafter%5D={from_date}"
         response = requests.get(url, headers={"Accept": "application/json"})
         if not response.ok:
             print(
@@ -123,11 +124,11 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
                     "%Y-%m-%d %H:%M"
                 )
             )
-            url = f"https://api.rating.chgk.net/tournaments?page={i}&itemsPerPage=50&dateStart%5Bbefore%5D={to_date}&dateStart%5Bafter%5D={from_date}&dateEnd%5Bafter%5D={to_date}&type=%D0%A1%D0%B8%D0%BD%D1%85%D1%80%D0%BE%D0%BD%2C%D0%90%D1%81%D0%B8%D0%BD%D1%85%D1%80%D0%BE%D0%BD"
+            url = f"{API_URL}/tournaments?page={i}&itemsPerPage=50&dateStart%5Bbefore%5D={to_date}&dateStart%5Bafter%5D={from_date}&dateEnd%5Bafter%5D={to_date}&type%5B%5D=3&type%5B%5D=8"
         else:
             to_date = tourn_date.strftime("%Y-%m-%d")
-            url = f"https://api.rating.chgk.net/tournaments?page={i}&itemsPerPage=50&dateStart%5Bbefore%5D={to_date}%2008%3A00&dateStart%5Bafter%5D={from_date}&dateEnd%5Bafter%5D={to_date}%2022%3A00&type=%D0%A1%D0%B8%D0%BD%D1%85%D1%80%D0%BE%D0%BD%2C%D0%90%D1%81%D0%B8%D0%BD%D1%85%D1%80%D0%BE%D0%BD"
-        # print(url)
+            url = f"{API_URL}/tournaments?page={i}&itemsPerPage=50&dateStart%5Bbefore%5D={to_date}%2008%3A00&dateStart%5Bafter%5D={from_date}&dateEnd%5Bafter%5D={to_date}%2022%3A00&type%5B%5D=3&type%5B%5D=8"
+        print(url)
         response = requests.get(url, headers={"Accept": "application/json"})
         tournaments = response.json()
         # print(tournaments)
