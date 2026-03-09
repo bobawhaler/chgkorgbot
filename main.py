@@ -191,7 +191,7 @@ def command():
             elif inp[0] == "/poll" and len(inp) > 1:
                 tourns = helpers.fetch_data(chat_id)
                 # print(f"Retrieved {tourns}")
-                user_chosen_idxs = [int(i) - 1 for i in inp[1].split(",")]
+                user_chosen_idxs = [int(i) - 1 for i in inp[1].split(",") if i]
                 if not all(0 <= idx < len(tourns) for idx in user_chosen_idxs):
                     telegram_api.send_message(
                         chat_id,
@@ -199,7 +199,7 @@ def command():
                         "Ошибка: неверные номера турниров в списке.",
                     )
                     return ""
-                user_chosen_tourns = [tourns[int(i) - 1] for i in inp[1].split(",")]
+                user_chosen_tourns = [tourns[idx] for idx in user_chosen_idxs]
                 filtered_tourns = []
                 filtered_tourn_ids = []
                 for tourn in user_chosen_tourns:
