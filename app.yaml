@@ -1,4 +1,7 @@
 runtime: python311
 
+automatic_scaling:
+  max_instances: 20
+
 includes:
 - env.yaml

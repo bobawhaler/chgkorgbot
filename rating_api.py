@@ -60,7 +60,7 @@ def get_sync_requests_ids(venue_id, months):
 
 def get_new_sync_requests(venue_id):
     tz = pytz.timezone("Europe/Moscow")
-    from_date = (datetime.datetime.now(tz) - relativedelta(minutes=15)).strftime(
+    from_date = (datetime.datetime.now(tz) - relativedelta(minutes=1)).strftime(
         "%Y-%m-%d %H:%M"
     )
     # from_date = (datetime.datetime.now(tz) - relativedelta(days=7)).strftime(
@@ -142,8 +142,10 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
             if (
                 "difficultyForecast" in tourn
                 and tourn["difficultyForecast"]
-                and tourn["difficultyForecast"]
-                < helpers.get_chat_min_difficulty(chat_id)
+                and (
+                    tourn["difficultyForecast"] < helpers.get_chat_min_difficulty(chat_id)
+                    or tourn["difficultyForecast"] > helpers.get_chat_max_difficulty(chat_id)
+                )
                 or only_rated
                 and ("maiiRating" not in tourn or not tourn["maiiRating"])
             ):

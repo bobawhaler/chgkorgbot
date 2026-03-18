@@ -21,6 +21,7 @@ def set_webhook():
     return "webhook set!"
 
 
+
 # @app.route("/getwebhook", methods=["GET"])
 # def get_webhook():
 #     response = telegram_api.get_webhook()
@@ -246,30 +247,19 @@ def command():
                         )
             elif inp[0] == "/feedback":
                 resp = telegram_api.create_feedback_poll(chat_id, thread_id)
-            elif inp[0] == "/setupchat":
-                timezone = ""
-                if len(inp) > 1:
-                    timezone = inp[1]
-                venues = ""
-                if len(inp) > 2:
-                    venues = inp[2]
-                min_difficulty = None
-                if len(inp) > 3:
-                    min_difficulty = float(inp[3])
-                thread_id = None
-                if (
-                    "is_forum" in body["message"]["chat"]
-                    and body["message"]["chat"]["is_forum"]
-                ):
-                    thread_id = body["message"].get("message_thread_id", None)
-                helpers.make_config(
-                    chat_id, timezone, venues, min_difficulty, thread_id
-                )
+            elif inp[0] == "/settimezone" and len(inp) > 1:
+                helpers.update_chat_config(chat_id, thread_id, timezone=inp[1])
+            elif inp[0] == "/setvenues" and len(inp) > 1:
+                helpers.update_chat_config(chat_id, thread_id, venues=inp[1])
+            elif inp[0] == "/setmindifficulty" and len(inp) > 1:
+                helpers.update_chat_config(chat_id, thread_id, min_difficulty=float(inp[1]))
+            elif inp[0] == "/setmaxdifficulty" and len(inp) > 1:
+                helpers.update_chat_config(chat_id, thread_id, max_difficulty=float(inp[1]))
             elif inp[0] == "/help":
                 telegram_api.send_message(
                     chat_id,
                     thread_id,
-                    "/setupchat <timezone>[ venue_id1,venue_id2...][ min_difficulty] - настройка часового пояса чата и мониторинга заявок на списке площадок и минимальной сложности турниров\n/tourns <YYYYMMDD>|<дата и время турнира> - список турниров на дату (и время)\n/rtourns <YYYYMMDD>|<дата и время турнира> - список рейтингуемых турниров на дату (и время)\n/poll <tourn_1,tourn_2,...> [title] [до <время окончания>]- создание голосовалки из 2-8 перечисленных номеров турниров\n/stop - как reply на сообщение с опросом, завершает его и подводит итоги\n/cancel - как reply на сообщение с опросом, завершает его без подведения итогов\n/feedback - опрос впечатлений о сыгранном пакете\n/help - эта подсказка",
+                    "/settimezone <timezone> - настройка часового пояса чата\n/setvenues <venue_id1,venue_id2...> - настройка мониторинга заявок на списке площадок\n/setmindifficulty <min_difficulty> - настройка минимальной сложности турниров\n/setmaxdifficulty <max_difficulty> - настройка максимальной сложности турниров\n/tourns <YYYYMMDD>|<дата и время турнира> - список турниров на дату (и время)\n/rtourns <YYYYMMDD>|<дата и время турнира> - список рейтингуемых турниров на дату (и время)\n/poll <tourn_1,tourn_2,...> [title] [до <время окончания>]- создание голосовалки из 2-8 перечисленных номеров турниров\n/stop - как reply на сообщение с опросом, завершает его и подводит итоги\n/cancel - как reply на сообщение с опросом, завершает его без подведения итогов\n/feedback - опрос впечатлений о сыгранном пакете\n/help - эта подсказка",
                 )
     except Exception as e:
         print(f"Error in command processing {e}")
