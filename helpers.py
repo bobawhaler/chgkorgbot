@@ -257,16 +257,6 @@ def update_chat_config(chat_id, thread_id, **kwargs):
         entity = datastore_client.get(key)
         if not entity:
             entity = datastore.Entity(key=key)
-            entity.update({
-                "timezone": DEFAULT_TIMEZONE,
-                "venues": [DEFAULT_VENUE_ID],
-                "thread_id": thread_id,
-                "min_difficulty": DEFAULT_MIN_DIFFICULTY,
-                "max_difficulty": DEFAULT_MAX_DIFFICULTY,
-            })
-        else:
-            if "max_difficulty" not in entity:
-                entity["max_difficulty"] = DEFAULT_MAX_DIFFICULTY
 
         if thread_id is not None:
             entity["thread_id"] = thread_id
@@ -313,7 +303,7 @@ def get_chat_venues(chat_id):
     entity = datastore_client.get(datastore_client.key("ChatConfig", str(chat_id)))
     if entity and "venues" in entity:
         return entity["venues"]
-    return [DEFAULT_VENUE_ID]
+    return []
 
 def get_default_poll_closing_time():
     return datetime.datetime.now() + relativedelta(months=1)
