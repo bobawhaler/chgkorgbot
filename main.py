@@ -4,6 +4,7 @@ from flask import Flask, request
 import rating_api
 import telegram_api
 import helpers
+import datastore
 import pytz
 
 
@@ -31,8 +32,8 @@ def set_webhook():
 @app.route("/systemtic", methods=["GET"])
 def system_tic():
     set_webhook()
-    all_configs = helpers.get_all_configs()
-    for task, multiple_candidates in helpers.traverse_finished_tasks():
+    all_configs = datastore.get_all_configs()
+    for task, multiple_candidates in datastore.traverse_finished_tasks():
         thread_id = None
         if str(task["chat_id"]) in all_configs:
             thread_id = all_configs[str(task["chat_id"])].get("thread_id", None)
@@ -93,7 +94,7 @@ def system_tic():
 @app.route(f"/command{helpers.OBFUSCATION_TOKEN}", methods=["POST"])
 def command():
     try:
-        all_configs = helpers.get_all_configs()
+        all_configs = datastore.get_all_configs()
         body = json.loads(request.data)
         # print(body)
         if body and "poll" in body:
@@ -133,7 +134,7 @@ def command():
                 ):
                     for venue_id in all_configs[str(chat_id)]["venues"]:
                         played_tourns.update(
-                            helpers.get_played_tourns(venue_id, chat_id)
+                            datastore.get_played_tourns(venue_id, chat_id)
                         )
                 only_rated = inp[0] == "/rtourns"
                 tourns_list = rating_api.get_tourns(
@@ -148,20 +149,20 @@ def command():
                 )
                 # print(f"Chat ID: {chat_id}")
                 # print(f"To save: {len(tourns_to_save)}, to show: {len(tourns_to_show)}")
-                helpers.store_data(chat_id, tourns_to_save)
+                datastore.store_data(chat_id, tourns_to_save)
                 telegram_api.send_multi_message(
                     chat_id,
                     thread_id,
                     [header] + [f"{i+1}. {e}" for i, e in enumerate(tourns_to_show)],
                 )
             elif inp[0] == "/print" and len(inp) > 1:
-                tourns = helpers.fetch_data(chat_id)
+                tourns = datastore.fetch_data(chat_id)
                 telegram_api.send_message(chat_id, thread_id, tourns[int(inp[1]) - 1])
             elif inp[0] == "/stop" or inp[0] == "/cancel":
                 message_id = None
                 if "reply_to_message" in body["message"]:
                     message_id = body["message"]["reply_to_message"]["message_id"]
-                task, multiple_candidates = helpers.pop_task(chat_id, message_id)
+                task, multiple_candidates = datastore.pop_task(chat_id, message_id)
                 print(task)
                 tourn_ids = []
                 if task:
@@ -190,7 +191,7 @@ def command():
                             "Ошибка: не найдено открытых голосований. Если такие есть, пожалуйста, используйте команду в ответ на сообщение с голосованием.",
                         )
             elif inp[0] == "/poll" and len(inp) > 1:
-                tourns = helpers.fetch_data(chat_id)
+                tourns = datastore.fetch_data(chat_id)
                 # print(f"Retrieved {tourns}")
                 user_chosen_idxs = [int(i) - 1 for i in inp[1].split(",") if i]
                 if not all(0 <= idx < len(tourns) for idx in user_chosen_idxs):
@@ -238,7 +239,7 @@ def command():
                             closing_time = helpers.get_default_poll_closing_time()
                             with_results = False
                         end_time_ts = int(closing_time.timestamp())
-                        helpers.add_task(
+                        datastore.add_task(
                             chat_id,
                             message_id,
                             end_time_ts,
@@ -248,13 +249,13 @@ def command():
             elif inp[0] == "/feedback":
                 resp = telegram_api.create_feedback_poll(chat_id, thread_id)
             elif inp[0] == "/settimezone" and len(inp) > 1:
-                helpers.update_chat_config(chat_id, thread_id, timezone=inp[1])
+                datastore.update_chat_config(chat_id, thread_id, timezone=inp[1])
             elif inp[0] == "/setvenues" and len(inp) > 1:
-                helpers.update_chat_config(chat_id, thread_id, venues=inp[1])
+                datastore.update_chat_config(chat_id, thread_id, venues=inp[1])
             elif inp[0] == "/setmindifficulty" and len(inp) > 1:
-                helpers.update_chat_config(chat_id, thread_id, min_difficulty=float(inp[1]))
+                datastore.update_chat_config(chat_id, thread_id, min_difficulty=float(inp[1]))
             elif inp[0] == "/setmaxdifficulty" and len(inp) > 1:
-                helpers.update_chat_config(chat_id, thread_id, max_difficulty=float(inp[1]))
+                datastore.update_chat_config(chat_id, thread_id, max_difficulty=float(inp[1]))
             elif inp[0] == "/help":
                 telegram_api.send_message(
                     chat_id,
