@@ -58,7 +58,7 @@ def system_tic():
                     sync_req["dateStart"]
                     .astimezone(
                         pytz.timezone(
-                            all_configs[chat_id].get("timezone", "Europe/Berlin")
+                            helpers.resolve_timezone(all_configs[chat_id].get("timezone"))
                         )
                     )
                     .strftime("%d.%m %H:%M")
