@@ -58,15 +58,13 @@ def get_sync_requests_ids(venue_id, months):
     return result
 
 
-def get_new_sync_requests(venue_id):
-    tz = pytz.timezone("Europe/Moscow")
-    from_date = (datetime.datetime.now(tz) - relativedelta(minutes=1)).strftime(
-        "%Y-%m-%d %H:%M"
+def get_new_sync_requests(venue_id, chat_id):
+    chat_tz = pytz.timezone(helpers.get_chat_timezone(chat_id))
+    from_date = (
+        (datetime.datetime.now(chat_tz) - relativedelta(minutes=1))
+        .astimezone(pytz.utc)
+        .strftime("%Y-%m-%d %H:%M")
     )
-    # from_date = (datetime.datetime.now(tz) - relativedelta(days=7)).strftime(
-    #     "%Y-%m-%d %H:%M"
-    # )
-    # print(d, fd)
     result = []
     if not venue_id:
         return result
@@ -120,14 +118,14 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
     for i in range(1, 30):
         if with_time:
             to_date = requests.utils.quote(
-                tourn_date.astimezone(pytz.timezone("Europe/Moscow")).strftime(
+                tourn_date.astimezone(pytz.utc).strftime(
                     "%Y-%m-%d %H:%M"
                 )
             )
             url = f"{API_URL}/tournaments?page={i}&itemsPerPage=50&dateStart%5Bbefore%5D={to_date}&dateStart%5Bafter%5D={from_date}&dateEnd%5Bafter%5D={to_date}&type%5B%5D=3&type%5B%5D=8"
         else:
             to_date = tourn_date.strftime("%Y-%m-%d")
-            url = f"{API_URL}/tournaments?page={i}&itemsPerPage=50&dateStart%5Bbefore%5D={to_date}%2008%3A00&dateStart%5Bafter%5D={from_date}&dateEnd%5Bafter%5D={to_date}%2022%3A00&type%5B%5D=3&type%5B%5D=8"
+            url = f"{API_URL}/tournaments?page={i}&itemsPerPage=50&dateStart%5Bbefore%5D={to_date}%2023%3A59&dateStart%5Bafter%5D={from_date}&dateEnd%5Bafter%5D={to_date}%2023%3A59&type%5B%5D=3&type%5B%5D=8"
         print(url)
         response = requests.get(url, headers={"Accept": "application/json"})
         tournaments = response.json()

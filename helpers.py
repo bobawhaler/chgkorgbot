@@ -18,6 +18,35 @@ DEFAULT_MAX_DIFFICULTY = 100.0
 
 COMMON_POLL_OPTIONS = ["буду играть любой", "не буду играть"]
 
+
+def resolve_timezone(tz_name):
+    """
+    Resolves a timezone name to a valid pytz timezone.
+    Returns default timezone if resolution fails.
+    """
+    if tz_name is None:
+        return DEFAULT_TIMEZONE
+    try:
+        pytz.timezone(tz_name)
+        return tz_name
+    except pytz.UnknownTimeZoneError:
+        # It's not a valid IANA timezone, let's try to map it
+        tz_map = {
+            "EEST": "Europe/Helsinki",
+            "CEST": "Europe/Berlin",
+            "MSK": "Europe/Moscow",
+            "RU": "Europe/Moscow",
+            "EET": "Europe/Helsinki",
+            "CET": "Europe/Berlin",
+        }
+        resolved_tz = tz_map.get(tz_name.upper())
+        if resolved_tz:
+            return resolved_tz
+
+        # If we can't resolve it, return default
+        return DEFAULT_TIMEZONE
+
+
 def get_datastore_client():
     return datastore.Client()
 
@@ -281,7 +310,7 @@ def get_chat_timezone(chat_id):
     datastore_client = get_datastore_client()
     entity = datastore_client.get(datastore_client.key("ChatConfig", str(chat_id)))
     if entity and "timezone" in entity:
-        return entity["timezone"]
+        return resolve_timezone(entity["timezone"])
     return DEFAULT_TIMEZONE
 
 def get_chat_min_difficulty(chat_id):
@@ -310,7 +339,7 @@ def get_default_poll_closing_time():
 
 def get_played_tourns(venue_id, chat_id):
     datastore_client = get_datastore_client()
-    from_date = (datetime.datetime.now() - relativedelta(months=10)).strftime(
+    from_date = (datetime.datetime.now(pytz.utc) - relativedelta(months=10)).strftime(
         "%Y-%m-%d"
     )
 

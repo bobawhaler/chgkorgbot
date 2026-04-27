@@ -48,7 +48,7 @@ def system_tic():
         if "venues" not in all_configs[chat_id]:
             continue
         for venue_id in all_configs[chat_id]["venues"]:
-            sync_reqs = rating_api.get_new_sync_requests(venue_id)
+            sync_reqs = rating_api.get_new_sync_requests(venue_id, chat_id)
             for sync_req in sync_reqs:
                 tourn = rating_api.get_tourn_by_id(sync_req["tourn_id"])
                 if not tourn["name"]:
