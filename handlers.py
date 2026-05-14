@@ -9,11 +9,13 @@ import datastore
 
 def system_tic_handler():
     telegram_api.set_webhook()
-    all_configs = datastore.get_all_configs()
+    
     for task, multiple_candidates in datastore.traverse_finished_tasks():
         thread_id = None
-        if str(task["chat_id"]) in all_configs:
-            thread_id = all_configs[str(task["chat_id"])].get("thread_id", None)
+        chat_config = datastore.get_chat_config(task["chat_id"])
+        if chat_config:
+            thread_id = chat_config.get("thread_id", None)
+            
         telegram_api.finalize_poll(
             task["chat_id"],
             thread_id,
@@ -22,52 +24,57 @@ def system_tic_handler():
             with_results=task.get("with_results", False),
             multiple_candidates=multiple_candidates,
         )
-    for chat_id in all_configs:
-        if "venues" not in all_configs[chat_id]:
+        
+    monitored_venues = datastore.get_monitored_venues()
+    for venue_id, chat_ids in monitored_venues.items():
+        sync_reqs = rating_api.get_new_sync_requests(venue_id)
+        if not sync_reqs:
             continue
-        for venue_id in all_configs[chat_id]["venues"]:
-            sync_reqs = rating_api.get_new_sync_requests(venue_id, chat_id)
-            for sync_req in sync_reqs:
-                tourn = rating_api.get_tourn_by_id(sync_req["tourn_id"])
-                if not tourn["name"]:
-                    continue
-                tourn_name = tourn["name"]
+            
+        for sync_req in sync_reqs:
+            tourn = rating_api.get_tourn_by_id(sync_req["tourn_id"])
+            if not tourn or not tourn.get("name"):
+                continue
+            tourn_name = tourn["name"]
+            
+            representative_form, representative_is_feminine = (
+                helpers.get_person_form(sync_req["representative"])
+            )
+            if representative_is_feminine:
+                representative_text = "Представительница: " + representative_form
+            else:
+                representative_text = "Представитель: " + representative_form
+
+            narrator_form, narrator_is_feminine = helpers.get_person_form(
+                sync_req["narrator"]
+            )
+            if narrator_is_feminine:
+                narrator_text = "Ведущая: " + narrator_form
+            else:
+                narrator_text = "Ведущий: " + narrator_form
+
+            url = f'https://rating.chgk.info/tournament/{sync_req["tourn_id"]}'
+            
+            for chat_id in chat_ids:
+                chat_config = datastore.get_chat_config(chat_id) or {}
                 start_time = (
                     sync_req["dateStart"]
                     .astimezone(
                         pytz.timezone(
-                            helpers.resolve_timezone(all_configs[chat_id].get("timezone"))
+                            helpers.resolve_timezone(chat_config.get("timezone"))
                         )
                     )
                     .strftime("%d.%m %H:%M")
                 )
-                representative_form, representative_is_feminine = (
-                    helpers.get_person_form(sync_req["representative"])
-                )
-                if representative_is_feminine:
-                    representative_text = "Представительница: " + representative_form
-                else:
-                    representative_text = "Представитель: " + representative_form
-
-                narrator_form, narrator_is_feminine = helpers.get_person_form(
-                    sync_req["narrator"]
-                )
-                if narrator_is_feminine:
-                    narrator_text = "Ведущая: " + narrator_form
-                else:
-                    narrator_text = "Ведущий: " + narrator_form
-
-                url = f'https://rating.chgk.info/tournament/{sync_req["tourn_id"]}'
-
+                
                 telegram_api.send_formatted_message(
                     int(chat_id),
-                    all_configs[chat_id].get("thread_id", None),
+                    chat_config.get("thread_id", None),
                     f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
                 )
 
 def command_handler(request):
     try:
-        all_configs = datastore.get_all_configs()
         body = json.loads(request.data)
         # print(body)
         if body and "poll" in body:
@@ -88,8 +95,9 @@ def command_handler(request):
                 "is_forum" in body["message"]["chat"]
                 and body["message"]["chat"]["is_forum"]
             ):
-                if str(chat_id) in all_configs:
-                    thread_id = all_configs[str(chat_id)].get("thread_id", None)
+                chat_config = datastore.get_chat_config(chat_id)
+                if chat_config:
+                    thread_id = chat_config.get("thread_id", None)
                 else:
                     thread_id = body["message"].get("message_thread_id", None)
             if (inp[0] == "/tourns" or inp[0] == "/rtourns") and len(inp) > 1:
@@ -101,11 +109,9 @@ def command_handler(request):
                 else:
                     header = f"Доступно на {tourn_date.strftime('%d.%m.%Y')}:"
                 played_tourns = {}
-                if (
-                    str(chat_id) in all_configs
-                    and "venues" in all_configs[str(chat_id)]
-                ):
-                    for venue_id in all_configs[str(chat_id)]["venues"]:
+                chat_config = datastore.get_chat_config(chat_id)
+                if chat_config and "venues" in chat_config:
+                    for venue_id in chat_config["venues"]:
                         played_tourns.update(
                             datastore.get_played_tourns(venue_id, chat_id)
                         )

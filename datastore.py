@@ -102,14 +102,24 @@ def add_task(chat_id, message_id, end_time_ts, tourn_ids, with_results):
     })
     datastore_client.put(entity)
 
+def get_monitored_venues():
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("MonitoredVenues", "main")
+    entity = datastore_client.get(key)
+    if entity and "venues" in entity:
+        return entity["venues"]
+    return {}
+
+
 def update_chat_config(chat_id, thread_id, **kwargs):
     datastore_client = get_datastore_client()
-    key = datastore_client.key("ChatConfig", str(chat_id))
+    chat_key = datastore_client.key("ChatConfig", str(chat_id))
+    monitored_key = datastore_client.key("MonitoredVenues", "main")
     
     with datastore_client.transaction():
-        entity = datastore_client.get(key)
+        entity = datastore_client.get(chat_key)
         if not entity:
-            entity = datastore.Entity(key=key)
+            entity = datastore.Entity(key=chat_key)
 
         if thread_id is not None:
             entity["thread_id"] = thread_id
@@ -121,6 +131,34 @@ def update_chat_config(chat_id, thread_id, **kwargs):
                 entity[k] = v
                 
         datastore_client.put(entity)
+
+        if "venues" in kwargs:
+            new_venues = entity["venues"]
+            
+            monitored_entity = datastore_client.get(monitored_key)
+            if not monitored_entity:
+                monitored_entity = datastore.Entity(key=monitored_key)
+                monitored_entity["venues"] = {}
+                
+            venues = monitored_entity.get("venues", {})
+            
+            for v_id in list(venues.keys()):
+                if str(chat_id) in venues[v_id]:
+                    venues[v_id].remove(str(chat_id))
+                if not venues[v_id]:
+                    del venues[v_id]
+                    
+            for v_id in new_venues:
+                v_id_str = str(v_id).strip()
+                if not v_id_str:
+                    continue
+                if v_id_str not in venues:
+                    venues[v_id_str] = []
+                if str(chat_id) not in venues[v_id_str]:
+                    venues[v_id_str].append(str(chat_id))
+                    
+            monitored_entity["venues"] = venues
+            datastore_client.put(monitored_entity)
 
 def get_all_configs():
     datastore_client = get_datastore_client()

@@ -58,11 +58,9 @@ def get_sync_requests_ids(venue_id, months):
     return result
 
 
-def get_new_sync_requests(venue_id, chat_id):
-    chat_tz = pytz.timezone(helpers.get_chat_timezone(chat_id))
+def get_new_sync_requests(venue_id):
     from_date = (
-        (datetime.datetime.now(chat_tz) - relativedelta(minutes=1))
-        .astimezone(pytz.utc)
+        (datetime.datetime.now(pytz.utc) - relativedelta(minutes=1))
         .strftime("%Y-%m-%d %H:%M")
     )
     result = []
