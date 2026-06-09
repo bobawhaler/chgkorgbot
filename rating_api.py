@@ -59,25 +59,37 @@ def get_sync_requests_ids(venue_id, months):
 
 
 def get_new_sync_requests(venue_id):
-    from_date = (
-        (datetime.datetime.now(pytz.utc) - relativedelta(minutes=1))
-        .strftime("%Y-%m-%d %H:%M")
-    )
+    now = datetime.datetime.now(pytz.utc)
+    # We look for requests issued in the last 30 days to be safe
+    from_date = (now - relativedelta(days=30)).strftime("%Y-%m-%d %H:%M")
+    to_date = (now + relativedelta(days=1)).strftime("%Y-%m-%d %H:%M")
+    today = now.date()
     result = []
     if not venue_id:
         return result
     for i in range(1, 30):
-        url = f"{API_URL}/venues/{venue_id}/requests?page={i}&itemsPerPage=30&issuedAt%5Bafter%5D={from_date}"
+        url = f"{API_URL}/venues/{venue_id}/requests?page={i}&itemsPerPage=30&issuedAt%5Bafter%5D={from_date}&issuedAt%5Bbefore%5D={to_date}"
         response = requests.get(url, headers={"Accept": "application/json"})
         if not response.ok:
             print(
                 f"Error getting new sync requests for venue {venue_id}, {response.status_code}, {response.reason}"
             )
+            break
         else:
             sync_requests = response.json()
             if not sync_requests:
                 break
             for sync_req in sync_requests:
+                try:
+                    dt_start = datetime.datetime.strptime(
+                        sync_req["dateStart"], "%Y-%m-%dT%H:%M:%S%z"
+                    ).date()
+                    if abs((dt_start - today).days) > 1:
+                        continue
+                except Exception as e:
+                    print(f"Error parsing date: {e}")
+                    continue
+
                 narrator = ""
                 if "narrator" in sync_req:
                     narrator = sync_req["narrator"]
@@ -85,6 +97,7 @@ def get_new_sync_requests(venue_id):
                     narrator = sync_req["narrators"][0]
                 else:
                     print("Error: no narrators in sync request")
+                
                 result.append(
                     {
                         "id": str(sync_req["id"]),
@@ -99,6 +112,8 @@ def get_new_sync_requests(venue_id):
                 )
 
     return result
+
+
 
 
 def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=False):

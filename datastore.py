@@ -235,7 +235,6 @@ def get_played_tourns(venue_id, chat_id):
                     
         entity.update({"played_tourns": stored_played_tourns})
         datastore_client.put(entity)
-
     return {
         played_tourn["tourn_id"]: (
             played_tourn["norm_name"],
@@ -244,3 +243,25 @@ def get_played_tourns(venue_id, chat_id):
         )
         for played_tourn in stored_played_tourns
     }
+
+def is_known_sync_request(sync_req_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("KnownSyncRequest", str(sync_req_id))
+    return datastore_client.get(key) is not None
+
+def add_known_sync_request(sync_req_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("KnownSyncRequest", str(sync_req_id))
+    entity = datastore.Entity(key=key)
+    entity.update({"added_at": datetime.datetime.now(pytz.utc)})
+    datastore_client.put(entity)
+
+def cleanup_old_sync_requests():
+    datastore_client = get_datastore_client()
+    threshold = datetime.datetime.now(pytz.utc) - relativedelta(days=7)
+    query = datastore_client.query(kind="KnownSyncRequest")
+    query.add_filter("added_at", "<", threshold)
+    
+    for entity in query.fetch():
+        datastore_client.delete(entity.key)
+

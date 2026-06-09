@@ -32,9 +32,14 @@ def system_tic_handler():
             continue
             
         for sync_req in sync_reqs:
+            if datastore.is_known_sync_request(sync_req["id"]):
+                continue
+
             tourn = rating_api.get_tourn_by_id(sync_req["tourn_id"])
             if not tourn or not tourn.get("name"):
                 continue
+            
+            datastore.add_known_sync_request(sync_req["id"])
             tourn_name = tourn["name"]
             
             representative_form, representative_is_feminine = (
