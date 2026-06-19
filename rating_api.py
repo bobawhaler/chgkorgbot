@@ -61,7 +61,7 @@ def get_sync_requests_ids(venue_id, months):
 def get_new_sync_requests(venue_id):
     now = datetime.datetime.now(pytz.utc)
     # We look for requests issued in the last 30 days to be safe
-    from_date = (now - relativedelta(days=30)).strftime("%Y-%m-%d %H:%M")
+    from_date = (now - relativedelta(days=1)).strftime("%Y-%m-%d %H:%M")
     to_date = (now + relativedelta(days=1)).strftime("%Y-%m-%d %H:%M")
     today = now.date()
     result = []
@@ -80,15 +80,6 @@ def get_new_sync_requests(venue_id):
             if not sync_requests:
                 break
             for sync_req in sync_requests:
-                try:
-                    dt_start = datetime.datetime.strptime(
-                        sync_req["dateStart"], "%Y-%m-%dT%H:%M:%S%z"
-                    ).date()
-                    if abs((dt_start - today).days) > 1:
-                        continue
-                except Exception as e:
-                    print(f"Error parsing date: {e}")
-                    continue
 
                 narrator = ""
                 if "narrator" in sync_req:
