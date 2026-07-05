@@ -1,13 +1,16 @@
 import argparse
 import datetime
+import time
 from dateutil.relativedelta import relativedelta
 import requests
 import helpers
 import pytz
+import debug
 
 API_URL = "https://api.rating.chgk.info"
 
 def get_tourn_by_id(tourn_id):
+    t0 = time.perf_counter()
     url = f"{API_URL}/tournaments/{tourn_id}"
     response = requests.get(url, headers={"Accept": "application/json"})
     if not response.ok:
@@ -15,10 +18,12 @@ def get_tourn_by_id(tourn_id):
             f"Error getting tournament by id {tourn_id}, {response.status_code}, {response.reason}"
         )
         return {}
+    debug.log("rating_api.get_tourn_by_id", t0, f"tourn_id={tourn_id}")
     return response.json()
 
 
 def get_tourn_by_request(request_id, chat_id):
+    t0 = time.perf_counter()
     url = f"{API_URL}/tournament_synch_requests/{request_id}"
     response = requests.get(url, headers={"Accept": "application/json"})
     if not response.ok:
@@ -27,12 +32,14 @@ def get_tourn_by_request(request_id, chat_id):
         )
         return None, None
     result = response.json()
+    debug.log("rating_api.get_tourn_by_request", t0, f"request_id={request_id}")
     return result.get("tournamentId", None), helpers.parse_date(
         result.get("issuedAt", ""), helpers.get_chat_timezone(chat_id)
     )[0].strftime("%Y-%m-%d")
 
 
 def get_sync_requests_ids(venue_id, months):
+    t0 = time.perf_counter()
     from_date = (datetime.datetime.now() - relativedelta(months=months)).strftime(
         "%Y-%m-%d"
     )
@@ -55,10 +62,12 @@ def get_sync_requests_ids(venue_id, months):
             if sync_req["status"] == "A":
                 result.append(str(sync_req["id"]))
 
+    debug.log("rating_api.get_sync_requests_ids", t0, f"venue={venue_id}, months={months} -> {len(result)}")
     return result
 
 
 def get_new_sync_requests(venue_id):
+    t0 = time.perf_counter()
     now = datetime.datetime.now(pytz.utc)
     # We look for requests issued in the last 30 days to be safe
     from_date = (now - relativedelta(days=1)).strftime("%Y-%m-%d %H:%M")
@@ -102,12 +111,14 @@ def get_new_sync_requests(venue_id):
                     }
                 )
 
+    debug.log("rating_api.get_new_sync_requests", t0, f"venue={venue_id} -> {len(result)}")
     return result
 
 
 
 
 def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=False):
+    t0 = time.perf_counter()
     from_date = (tourn_date - relativedelta(months=1)).strftime("%Y-%m-%d")
     print(tourn_date, from_date)
     result = []
@@ -210,6 +221,7 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
                     "editors": tourn_editors,
                 }
             )
+    debug.log("rating_api.get_tourns", t0, f"date={tourn_date}, only_rated={only_rated} -> {len(result)}")
     return result
 
 

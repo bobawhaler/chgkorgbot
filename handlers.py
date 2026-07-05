@@ -1,13 +1,16 @@
 import traceback
 import json
+import time
 import pytz
 
 import rating_api
 import telegram_api
 import helpers
 import datastore
+import debug
 
 def system_tic_handler():
+    t0 = time.perf_counter()
     telegram_api.set_webhook()
     
     for task, multiple_candidates in datastore.traverse_finished_tasks():
@@ -77,8 +80,10 @@ def system_tic_handler():
                     chat_config.get("thread_id", None),
                     f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
                 )
+    debug.log("system_tic_handler", t0)
 
 def command_handler(request):
+    t0 = time.perf_counter()
     try:
         body = json.loads(request.data)
         # print(body)
@@ -246,7 +251,16 @@ def command_handler(request):
                     thread_id,
                     "/settimezone <timezone> - настройка часового пояса чата\n/setvenues <venue_id1,venue_id2...> - настройка мониторинга заявок на списке площадок\n/setmindifficulty <min_difficulty> - настройка минимальной сложности турниров\n/setmaxdifficulty <max_difficulty> - настройка максимальной сложности турниров\n/tourns <YYYYMMDD>|<дата и время турнира> - список турниров на дату (и время)\n/rtourns <YYYYMMDD>|<дата и время турнира> - список рейтингуемых турниров на дату (и время)\n/poll <tourn_1,tourn_2,...> [title] [до <время окончания>]- создание голосовалки из 2-8 перечисленных номеров турниров\n/stop - как reply на сообщение с опросом, завершает его и подводит итоги\n/cancel - как reply на сообщение с опросом, завершает его без подведения итогов\n/feedback - опрос впечатлений о сыгранном пакете\n/help - эта подсказка",
                 )
+            elif inp[0] == "/debug":
+                if len(inp) > 1:
+                    enabled = inp[1].lower() in ("1", "true", "вкл", "on", "enable")
+                    debug.set_debug(enabled)
+                    telegram_api.send_message(chat_id, thread_id, f"Debug mode: {'enabled' if enabled else 'disabled'}")
+                else:
+                    is_on = debug.get_debug()
+                    telegram_api.send_message(chat_id, thread_id, f"Debug mode: {'enabled' if is_on else 'disabled'}")
     except Exception as e:
         print(f"Error in command processing {e}")
         print(traceback.format_exc())
+    debug.log("command_handler", t0, f"chat_id={chat_id}")
     return ""

@@ -1,4 +1,4 @@
 cron:
   - description: "system tic"
     url: /systemtic
-    schedule: every 1 mins synchronized
+    schedule: every 5 mins synchronized

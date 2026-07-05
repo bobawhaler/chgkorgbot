@@ -1,7 +1,9 @@
 import requests
+import time
 from telegram import ParseMode
 import random
 import helpers
+import debug
 
 
 BASE_URL = "https://api.telegram.org/bot" + helpers.TELEGRAM_API_TOKEN + "/"
@@ -12,6 +14,7 @@ MAX_MESSAGE_SIZE = 4000
 
 
 def set_webhook():
+    t0 = time.perf_counter()
     resp = get_webhook()
     # print(resp)
     if (
@@ -23,17 +26,22 @@ def set_webhook():
             BASE_URL + "setWebhook",
             json={"url": HOOK_URL, "drop_pending_updates": True},
         )
+        debug.log("telegram_api.set_webhook", t0)
         if not response.ok:
             print(f"Error setting webhook {response.status_code}, {response.reason}")
 
 
 def get_webhook():
-    return requests.get(BASE_URL + "getWebhookInfo")
+    t0 = time.perf_counter()
+    resp = requests.get(BASE_URL + "getWebhookInfo")
+    debug.log("telegram_api.get_webhook", t0)
+    return resp
 
 
 def send_message(
     chat_id, message_thread_id, message, formatted=False, reply_to_message_id=None
 ):
+    t0 = time.perf_counter()
     params = {
         "chat_id": str(chat_id),
         "text": message,
@@ -50,6 +58,7 @@ def send_message(
         BASE_URL + "sendMessage",
         json=params,
     )
+    debug.log("telegram_api.send_message", t0, f"chat_id={chat_id}")
     if not response.ok:
         print(f"Error sending message {response.status_code}, {response.reason}")
 
@@ -67,6 +76,7 @@ def send_formatted_message(
 
 
 def send_multi_message(chat_id, message_thread_id, string_list):
+    t0 = time.perf_counter()
     string_pool = []
     pool_size = 0
     for s in string_list:
@@ -81,9 +91,11 @@ def send_multi_message(chat_id, message_thread_id, string_list):
             pool_size = len(s)
     if string_pool:
         send_message(chat_id, message_thread_id, "\n".join(string_pool), formatted=True)
+    debug.log("telegram_api.send_multi_message", t0, f"chat_id={chat_id}, count={len(string_list)}")
 
 
 def pin_message(chat_id, message_thread_id, message_id):
+    t0 = time.perf_counter()
     params = {"chat_id": str(chat_id), "message_id": str(message_id)}
     if message_thread_id:
         params["message_thread_id"] = message_thread_id
@@ -91,12 +103,12 @@ def pin_message(chat_id, message_thread_id, message_id):
         BASE_URL + "pinChatMessage",
         json=params,
     )
-    if not response.ok:
-        print(f"Error pinning message {response.status_code}, {response.reason}")
+    debug.log("telegram_api.pin_message", t0, f"chat_id={chat_id}")
     return response
 
 
 def unpin_message(chat_id, message_thread_id, message_id):
+    t0 = time.perf_counter()
     params = {"chat_id": str(chat_id), "message_id": str(message_id)}
     if message_thread_id:
         params["message_thread_id"] = message_thread_id
@@ -104,12 +116,12 @@ def unpin_message(chat_id, message_thread_id, message_id):
         BASE_URL + "unpinChatMessage",
         json=params,
     )
-    if not response.ok:
-        print(f"Error unpinning message {response.status_code}, {response.reason}")
+    debug.log("telegram_api.unpin_message", t0, f"chat_id={chat_id}")
     return response
 
 
 def create_game_poll(chat_id, message_thread_id, title, chosen_tourns):
+    t0 = time.perf_counter()
     params = {
         "chat_id": str(chat_id),
         "question": title,
@@ -124,12 +136,12 @@ def create_game_poll(chat_id, message_thread_id, title, chosen_tourns):
         BASE_URL + "sendPoll",
         json=params,
     )
-    if not response.ok:
-        print(f"Error creating poll {response.status_code}, {response.reason}")
+    debug.log("telegram_api.create_game_poll", t0, f"chat_id={chat_id}")
     return response
 
 
 def create_feedback_poll(chat_id, message_thread_id):
+    t0 = time.perf_counter()
     params = {
         "chat_id": str(chat_id),
         "question": "Сыгранный пакет показался вам...",
@@ -155,16 +167,17 @@ def create_feedback_poll(chat_id, message_thread_id):
         BASE_URL + "sendPoll",
         json=params,
     )
-    if not response.ok:
-        print(f"Error creating poll {response.status_code}, {response.reason}")
+    debug.log("telegram_api.create_feedback_poll", t0, f"chat_id={chat_id}")
     return response
 
 
 def stop_poll(chat_id, message_thread_id, message_id):
+    t0 = time.perf_counter()
     params = {"chat_id": str(chat_id), "message_id": message_id}
     if message_thread_id:
         params["message_thread_id"] = message_thread_id
     response = requests.post(BASE_URL + "stopPoll", json=params)
+    debug.log("telegram_api.stop_poll", t0, f"chat_id={chat_id}")
     if not response.ok:
         print(f"Error stopping poll {response.status_code}, {response.reason}")
     return response
@@ -185,6 +198,7 @@ def finalize_poll(
     with_results,
     multiple_candidates=False,
 ):
+    t0 = time.perf_counter()
     unpin_message(chat_id, message_thread_id, message_id)
     resp = stop_poll(chat_id, message_thread_id, message_id)
     if not resp.ok:
@@ -220,3 +234,4 @@ def finalize_poll(
                     f'Победители: {", ".join([w[0] for w in winners])}.\nСлучайный выбор: {get_printable(random.choice(winners))}',
                     message_id if multiple_candidates else None,
                 )
+    debug.log("telegram_api.finalize_poll", t0, f"chat_id={chat_id}")
