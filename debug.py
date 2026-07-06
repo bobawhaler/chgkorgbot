@@ -3,8 +3,12 @@ import helpers
 import datastore
 
 def get_debug():
-    config = datastore.get_chat_config("bot_debug")
-    return config and config.get("debug", False)
+    try:
+        config = datastore.get_chat_config("bot_debug")
+        return config and config.get("debug", False)
+    except Exception as e:
+        print(f"[DEBUG ERROR] Failed to fetch debug config: {e}")
+        return False
 
 def set_debug(enabled):
     datastore.update_chat_config("bot_debug", None, debug=enabled)

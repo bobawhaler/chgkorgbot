@@ -34,7 +34,7 @@ def set_webhook():
 
 def get_webhook():
     t0 = time.perf_counter()
-    resp = requests.get(BASE_URL + "getWebhookInfo")
+    resp = requests.get(BASE_URL + "getWebhookInfo", headers={"Accept": "application/json"})
     debug.log("telegram_api.get_webhook", t0)
     return resp.json()
 

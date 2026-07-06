@@ -80,6 +80,7 @@ def system_tic_handler():
                     chat_config.get("thread_id", None),
                     f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
                 )
+    datastore.cleanup_old_cached_tournaments()
     debug.log("system_tic_handler", t0)
 
 def command_handler(request):

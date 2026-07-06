@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from google.cloud import datastore
+from google.cloud.datastore.query import PropertyFilter
 import datetime
 import pytz
 from dateutil.relativedelta import relativedelta
@@ -8,7 +9,9 @@ import rating_api
 
 
 def get_datastore_client():
-    return datastore.Client()
+    import os
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("PROJECT_ID")
+    return datastore.Client(project=project_id) if project_id else datastore.Client()
 
 def store_data(chat_id, tourns_to_save):
     datastore_client = get_datastore_client()
@@ -64,7 +67,7 @@ def remove_task(chat_id, message_id):
 def pop_task(chat_id, message_id):
     datastore_client = get_datastore_client()
     query = datastore_client.query(kind="PollTask")
-    query.add_filter("chat_id", "=", chat_id)
+    query.add_filter(filter=PropertyFilter("chat_id", "=", chat_id))
     chat_tasks = list(query.fetch())
     
     return_task = None
@@ -206,7 +209,7 @@ def get_played_tourns(venue_id, chat_id):
                 tourn_id, tourn_date = rating_api.get_tourn_by_request(sync_req, chat_id)
                 if tourn_id:
                     tourn = rating_api.get_tourn_by_id(tourn_id)
-                    if "name" not in tourn or "editors" not in tourn:
+                    if not tourn or "name" not in tourn or "editors" not in tourn:
                         print(f"Missing data for sync_req {sync_req}, tourn_id {tourn_id}")
                     stored_played_tourns.append(
                         {
@@ -260,8 +263,128 @@ def cleanup_old_sync_requests():
     datastore_client = get_datastore_client()
     threshold = datetime.datetime.now(pytz.utc) - relativedelta(days=7)
     query = datastore_client.query(kind="KnownSyncRequest")
-    query.add_filter("added_at", "<", threshold)
+    query.add_filter(filter=PropertyFilter("added_at", "<", threshold))
     
     for entity in query.fetch():
         datastore_client.delete(entity.key)
+
+
+def get_cached_tournament(tourn_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("CachedTournament", str(tourn_id))
+    entity = datastore_client.get(key)
+    print(f"[CACHE] get_cached_tournament key={key}, entity={dict(entity) if entity else None}")
+    if entity and entity.get("name"):
+        raw_editors = entity.get("editors", [])
+        editors = []
+        for e in raw_editors:
+            if isinstance(e, dict):
+                editors.append({
+                    "name": e.get("name", ""),
+                    "surname": e.get("surname", "")
+                })
+            elif isinstance(e, str):
+                parts = e.split(" ", 1)
+                if len(parts) == 2:
+                    editors.append({"name": parts[0], "surname": parts[1]})
+                else:
+                    editors.append({"name": e, "surname": ""})
+        return {
+            "name": entity["name"],
+            "editors": editors,
+        }
+    return None
+
+
+def cache_tournament(tourn_id, data):
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("CachedTournament", str(tourn_id))
+        editors = []
+        for e in data.get("editors", []):
+            if isinstance(e, dict):
+                editors.append({
+                    "name": e.get("name", ""),
+                    "surname": e.get("surname", "")
+                })
+            elif isinstance(e, str):
+                parts = e.split(" ", 1)
+                if len(parts) == 2:
+                    editors.append({"name": parts[0], "surname": parts[1]})
+                else:
+                    editors.append({"name": e, "surname": ""})
+        entity = datastore.Entity(key=key)
+        entity.update({
+            "name": data.get("name", ""),
+            "editors": editors,
+            "cached_at": datetime.datetime.now(pytz.utc),
+        })
+        print(f"[CACHE] cache_tournament key={key}, name={data.get('name', '')}, editors={editors}")
+        datastore_client.put(entity)
+        print(f"[CACHE] cache_tournament put success, entity={dict(entity)}")
+    except Exception as e:
+        print(f"[CACHE ERROR] cache_tournament failed for {tourn_id}: {e}")
+
+
+def cleanup_old_cached_tournaments():
+    datastore_client = get_datastore_client()
+    threshold = datetime.datetime.now(pytz.utc) - relativedelta(days=30)
+    query = datastore_client.query(kind="CachedTournament")
+    query.add_filter(filter=PropertyFilter("cached_at", "<", threshold))
+    
+    for entity in query.fetch():
+        datastore_client.delete(entity.key)
+
+
+def cache_tournaments_batch(tournaments_data):
+    try:
+        datastore_client = get_datastore_client()
+        entities = []
+        for tourn in tournaments_data:
+            tourn_id = tourn.get("id")
+            if not tourn_id:
+                continue
+            key = datastore_client.key("CachedTournament", str(tourn_id))
+            
+            editors = []
+            raw_editors = tourn.get("editors", [])
+            if isinstance(raw_editors, list):
+                for e in raw_editors:
+                    if isinstance(e, dict):
+                        editors.append({
+                            "name": e.get("name", ""),
+                            "surname": e.get("surname", "")
+                        })
+                    elif isinstance(e, str):
+                        parts = e.split(" ", 1)
+                        if len(parts) == 2:
+                            editors.append({"name": parts[0], "surname": parts[1]})
+                        else:
+                            editors.append({"name": e, "surname": ""})
+            elif isinstance(raw_editors, str):
+                for name in raw_editors.split(","):
+                    name = name.strip()
+                    if name:
+                        parts = name.split(" ", 1)
+                        if len(parts) == 2:
+                            editors.append({"name": parts[0], "surname": parts[1]})
+                        else:
+                            editors.append({"name": name, "surname": ""})
+                            
+            entity = datastore.Entity(key=key)
+            entity.update({
+                "name": tourn.get("name", ""),
+                "editors": editors,
+                "cached_at": datetime.datetime.now(pytz.utc),
+            })
+            entities.append(entity)
+            
+        if entities:
+            chunk_size = 400
+            for i in range(0, len(entities), chunk_size):
+                chunk = entities[i:i + chunk_size]
+                datastore_client.put_multi(chunk)
+            print(f"[CACHE BATCH] Successfully cached {len(entities)} tournaments")
+    except Exception as e:
+        print(f"[CACHE ERROR] cache_tournaments_batch failed: {e}")
 

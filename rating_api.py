@@ -48,6 +48,15 @@ def _fetch_paginated(url_base, params, items_per_page):
 
 
 def get_tourn_by_id(tourn_id):
+    try:
+        import datastore
+        tourn = datastore.get_cached_tournament(tourn_id)
+        if tourn:
+            print(f"[CACHE HIT] get_tourn_by_id tourn_id={tourn_id}")
+            return tourn
+    except Exception as e:
+        print(f"[CACHE ERROR] failed to read cache in get_tourn_by_id for {tourn_id}: {e}")
+
     t0 = time.perf_counter()
     url = f"{API_URL}/tournaments/{tourn_id}"
     response = requests.get(url, headers={"Accept": "application/json"})
@@ -57,7 +66,17 @@ def get_tourn_by_id(tourn_id):
         )
         return {}
     debug.log("rating_api.get_tourn_by_id", t0, f"tourn_id={tourn_id}")
-    return response.json()
+    tourn = response.json()
+
+    if tourn and tourn.get("name"):
+        try:
+            import datastore
+            datastore.cache_tournament(tourn_id, tourn)
+            print(f"[CACHE WRITE] cached tourn {tourn_id}: {tourn.get('name')}")
+        except Exception as e:
+            print(f"[CACHE ERROR] failed to write cache in get_tourn_by_id for {tourn_id}: {e}")
+
+    return tourn
 
 
 def get_tourn_by_request(request_id, chat_id):
@@ -273,6 +292,12 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
             }
         )
     debug.log("rating_api.get_tourns", t0, f"date={tourn_date}, only_rated={only_rated} -> {len(result)}")
+    if tournaments:
+        try:
+            import datastore
+            datastore.cache_tournaments_batch(tournaments)
+        except Exception as e:
+            print(f"[CACHE ERROR] failed to write cache batch in get_tourns: {e}")
     return result
 
 
