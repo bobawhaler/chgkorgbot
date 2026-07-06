@@ -11,7 +11,7 @@ import debug
 
 def system_tic_handler():
     t0 = time.perf_counter()
-    telegram_api.set_webhook()
+    # telegram_api.set_webhook()
     
     for task, multiple_candidates in datastore.traverse_finished_tasks():
         thread_id = None
@@ -84,6 +84,7 @@ def system_tic_handler():
 
 def command_handler(request):
     t0 = time.perf_counter()
+    chat_id = None
     try:
         body = json.loads(request.data)
         # print(body)

@@ -16,7 +16,6 @@ MAX_MESSAGE_SIZE = 4000
 def set_webhook():
     t0 = time.perf_counter()
     resp = get_webhook()
-    # print(resp)
     if (
         "result" not in resp
         or "url" not in resp["result"]
@@ -29,13 +28,15 @@ def set_webhook():
         debug.log("telegram_api.set_webhook", t0)
         if not response.ok:
             print(f"Error setting webhook {response.status_code}, {response.reason}")
+    else:
+        debug.log("telegram_api.set_webhook", t0, "already set")
 
 
 def get_webhook():
     t0 = time.perf_counter()
     resp = requests.get(BASE_URL + "getWebhookInfo")
     debug.log("telegram_api.get_webhook", t0)
-    return resp
+    return resp.json()
 
 
 def send_message(

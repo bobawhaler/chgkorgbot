@@ -6,6 +6,7 @@ import rating_api
 from dateutil.relativedelta import relativedelta
 import os
 import datastore
+import debug
 
 PROJECT_ID = os.environ.get("PROJECT_ID")
 TELEGRAM_API_TOKEN = os.environ.get("TELEGRAM_API_TOKEN")
@@ -75,7 +76,8 @@ def get_person_form(person):
 def parse_date(input_date, timezone):
     try:
         result_date = datetime.datetime.strptime(input_date, "%Y%m%d").date()
-        print(result_date)
+        if debug.get_debug():
+            print("parse_date:", input_date, "->", result_date)
         return result_date, False
     except:
         normal_date = (
@@ -116,6 +118,8 @@ def parse_date(input_date, timezone):
         ):
             result_date -= week_delta
 
+        if debug.get_debug():
+            print("parse_date:", input_date, "->", result_date)
         return result_date, True
 
 def get_tourns_representations(tourns):
