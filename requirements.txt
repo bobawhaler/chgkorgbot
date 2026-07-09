@@ -5,4 +5,5 @@ python-dateutil==2.9.0.post0
 google-cloud-datastore==2.20.1
 dateparser==1.1.8
 google-cloud-scheduler==2.16.1
+google-cloud-tasks==2.16.1
 Werkzeug==2.3.8

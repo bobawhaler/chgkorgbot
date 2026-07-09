@@ -83,12 +83,10 @@ def system_tic_handler():
     datastore.cleanup_old_cached_tournaments()
     debug.log("system_tic_handler", t0)
 
-def command_handler(request):
+def command_handler(body):
     t0 = time.perf_counter()
     chat_id = None
     try:
-        body = json.loads(request.data)
-        # print(body)
         if body and "poll" in body:
             print(
                 f"Update Poll: {body['poll']['id']}, total votes: {body['poll']['total_voter_count']}"

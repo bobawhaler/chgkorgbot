@@ -99,7 +99,8 @@ def parse_date(input_date, timezone):
                 "NORMALIZE": True,
             },
         )
-        print(result_date)
+        if debug.get_debug():
+            print("parse_date:", input_date, "->", result_date)
         if not result_date:
             return datetime.datetime.now().date(), False
         week_delta = relativedelta(days=7)
@@ -118,8 +119,6 @@ def parse_date(input_date, timezone):
         ):
             result_date -= week_delta
 
-        if debug.get_debug():
-            print("parse_date:", input_date, "->", result_date)
         return result_date, True
 
 def get_tourns_representations(tourns):
