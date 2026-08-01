@@ -47,15 +47,24 @@
     *   `TELEGRAM_API_TOKEN`: Токен вашего Telegram-бота.
     *   `OBFUSCATION_TOKEN`: Произвольная строка для обфускации URL веб-хука.
     *   `CLOUD_TASKS_QUEUE`: Имя очереди задач (по умолчанию `bot-tasks`).
-    *   `CLOUD_TASKS_LOCATION`: Регион очереди задач (например, `us-central1`).
+    *   `APP_REGION`: Регион очереди задач и сервисов Google Cloud (например, `us-central1`).
 
 2.  **Настройка Google Cloud:**
     Необходимо создать очередь задач в вашем проекте. Выполните команду в терминале:
     ```bash
-    gcloud tasks queues create bot-tasks --location=us-central1
+    gcloud tasks queues create bot-tasks --location=APP_REGION
+    ```
+
+    Для настройки автоматической очистки старых образов App Engine Standard в Artifact Registry (имя репозитория по умолчанию — `gae-standard`):
+    ```bash
+    gcloud artifacts repositories set-cleanup-policies gae-standard \
+        --location=APP_REGION \
+        --project=PROJECT_ID \
+        --policy=artifact_registry_policy.json \
+        --no-dry-run
     ```
 
 3.  **Веб-хук:**
     Для работы бота необходимо установить веб-хук для Telegram. URL веб-хука должен указывать на эндпоинт `/command<YOUR_WEBHOOK_OBFUSCATION_TOKEN>` вашего развернутого приложения.
-    Для Google App Engine это: `https://<YOUR_PROJECT_ID>.appspot.com/command<YOUR_WEBHOOK_OBFUSCATION_TOKEN}`
+    Для Google App Engine это: `https://<YOUR_PROJECT_ID>.appspot.com/command<YOUR_WEBHOOK_OBFUSCATION_TOKEN>`
     Установить веб-хук можно, обратившись к эндпоинту `https://<YOUR_PROJECT_ID>.appspot.com/setwebhook` вашего развернутого приложения один раз.

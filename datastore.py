@@ -10,7 +10,7 @@ import rating_api
 
 def get_datastore_client():
     import os
-    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("PROJECT_ID")
+    project_id = os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
     return datastore.Client(project=project_id) if project_id else datastore.Client()
 
 def store_data(chat_id, tourns_to_save):

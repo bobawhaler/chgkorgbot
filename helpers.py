@@ -8,7 +8,7 @@ import os
 import datastore
 import debug
 
-PROJECT_ID = os.environ.get("PROJECT_ID")
+PROJECT_ID = os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
 TELEGRAM_API_TOKEN = os.environ.get("TELEGRAM_API_TOKEN")
 OBFUSCATION_TOKEN = os.environ.get("OBFUSCATION_TOKEN")
 

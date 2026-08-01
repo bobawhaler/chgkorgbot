@@ -38,9 +38,9 @@ def command():
     
     try:
         body = json.loads(request.data)
-        project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        project = os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
         queue = os.environ.get("CLOUD_TASKS_QUEUE", "bot-tasks")
-        location = os.environ.get("CLOUD_TASKS_LOCATION", "us-central1")
+        location = os.environ.get("APP_REGION", "us-central1")
         
         parent = client.queue_path(project, location, queue)
         target_url = f"{request.host_url}process_task{helpers.OBFUSCATION_TOKEN}"
