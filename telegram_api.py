@@ -40,7 +40,7 @@ def get_webhook():
 
 
 def send_message(
-    chat_id, message_thread_id, message, formatted=False, reply_to_message_id=None
+    chat_id, message_thread_id, message, formatted=False, reply_to_message_id=None, reply_markup=None
 ):
     t0 = time.perf_counter()
     params = {
@@ -54,6 +54,8 @@ def send_message(
         params["message_thread_id"] = message_thread_id
     if reply_to_message_id:
         params["reply_to_message_id"] = reply_to_message_id
+    if reply_markup:
+        params["reply_markup"] = reply_markup
     # print(len(params["text"]))
     response = requests.post(
         BASE_URL + "sendMessage",
@@ -61,7 +63,9 @@ def send_message(
     )
     debug.log("telegram_api.send_message", t0, f"chat_id={chat_id}")
     if not response.ok:
-        print(f"Error sending message {response.status_code}, {response.reason}")
+        print(f"Error sending message {response.status_code}, {response.reason} for chat_id={chat_id}")
+    return response
+
 
 
 def send_formatted_message(
@@ -236,3 +240,84 @@ def finalize_poll(
                     message_id if multiple_candidates else None,
                 )
     debug.log("telegram_api.finalize_poll", t0, f"chat_id={chat_id}")
+
+
+def edit_message_text(
+    chat_id, message_id, text, formatted=True, reply_markup=None
+):
+    t0 = time.perf_counter()
+    params = {
+        "chat_id": str(chat_id),
+        "message_id": message_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if formatted:
+        params["parse_mode"] = ParseMode.HTML
+    if reply_markup is not None:
+        params["reply_markup"] = reply_markup
+    response = requests.post(BASE_URL + "editMessageText", json=params)
+    debug.log("telegram_api.edit_message_text", t0, f"chat_id={chat_id}, message_id={message_id}")
+    if not response.ok:
+        print(f"Error editing message text {response.status_code}, {response.reason}")
+    return response
+
+
+def answer_callback_query(callback_query_id, text=None, show_alert=False):
+    t0 = time.perf_counter()
+    params = {"callback_query_id": str(callback_query_id)}
+    if text:
+        params["text"] = text
+    if show_alert:
+        params["show_alert"] = True
+    response = requests.post(BASE_URL + "answerCallbackQuery", json=params)
+    debug.log("telegram_api.answer_callback_query", t0, f"id={callback_query_id}")
+    return response
+
+
+def set_message_reaction(chat_id, message_id, emoji="❤️"):
+    t0 = time.perf_counter()
+    params = {
+        "chat_id": str(chat_id),
+        "message_id": message_id,
+        "reaction": [{"type": "emoji", "emoji": emoji}],
+    }
+    response = requests.post(
+        BASE_URL + "setMessageReaction",
+        json=params,
+        headers={"Accept": "application/json"},
+    )
+    debug.log("telegram_api.set_message_reaction", t0, f"chat_id={chat_id}, message_id={message_id}")
+    if not response.ok:
+        print(f"Error setting reaction {response.status_code}, {response.reason}")
+    return response
+
+
+def send_chat_action(chat_id, action="typing"):
+    t0 = time.perf_counter()
+    params = {"chat_id": str(chat_id), "action": action}
+    response = requests.post(BASE_URL + "sendChatAction", json=params)
+    debug.log("telegram_api.send_chat_action", t0, f"chat_id={chat_id}, action={action}")
+    return response
+
+
+def send_document(chat_id, file_content, filename, caption=None):
+    t0 = time.perf_counter()
+    if isinstance(file_content, str):
+        file_content = file_content.encode("utf-8")
+    
+    files = {"document": (filename, file_content, "text/csv")}
+    data = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption
+        data["parse_mode"] = ParseMode.HTML
+    
+    response = requests.post(BASE_URL + "sendDocument", data=data, files=files)
+    debug.log("telegram_api.send_document", t0, f"chat_id={chat_id}, filename={filename}")
+    if not response.ok:
+        print(f"Error sending document {response.status_code}, {response.reason}")
+    return response
+
+
+
+

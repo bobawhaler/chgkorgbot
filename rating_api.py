@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import time
+import concurrent.futures
 from dateutil.relativedelta import relativedelta
 from urllib.parse import quote
 import requests
@@ -301,7 +302,203 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
     return result
 
 
+def get_team_by_id(team_id):
+    t0 = time.perf_counter()
+    if not team_id:
+        return {}
+    try:
+        resp = requests.get(f"{API_URL}/teams/{team_id}", headers={"Accept": "application/json"})
+        if resp.ok:
+            data = resp.json()
+            if isinstance(data, dict) and "id" in data:
+                town = data.get("town", {})
+                town_name = town.get("name", "") if isinstance(town, dict) else ""
+                return {"id": data["id"], "name": data.get("name", ""), "town": town_name}
+    except Exception as e:
+        print(f"Error fetching team by id={team_id}: {e}")
+    return {}
+
+
+def search_teams(query):
+    t0 = time.perf_counter()
+    query = str(query).strip()
+    if not query:
+        return []
+    result = []
+    try:
+        if query.isdigit():
+            resp = requests.get(f"{API_URL}/teams/{query}", headers={"Accept": "application/json"})
+            if resp.ok:
+                data = resp.json()
+                if isinstance(data, dict) and "id" in data:
+                    town = data.get("town", {})
+                    town_name = town.get("name", "") if isinstance(town, dict) else ""
+                    result.append({"id": data["id"], "name": data.get("name", ""), "town": town_name})
+                    return result
+
+        resp = requests.get(f"{API_URL}/teams", params={"name": query, "itemsPerPage": 10}, headers={"Accept": "application/json"})
+        if resp.ok:
+            data = resp.json()
+            if isinstance(data, list):
+                for item in data:
+                    town = item.get("town", {})
+                    town_name = town.get("name", "") if isinstance(town, dict) else ""
+                    result.append({"id": item.get("id"), "name": item.get("name", ""), "town": town_name})
+    except Exception as e:
+        print(f"Error searching teams query={query}: {e}")
+    debug.log("rating_api.search_teams", t0, f"query={query} -> {len(result)}")
+    return result
+
+
+def get_player_town(pid):
+    if not pid:
+        return ""
+    try:
+        r = requests.get(f"{API_URL}/players/{pid}/seasons", params={"itemsPerPage": 10}, headers={"Accept": "application/json"})
+        if r.ok and isinstance(r.json(), list) and r.json():
+            seasons = r.json()
+            latest_team_id = seasons[-1].get("idteam")
+            if latest_team_id:
+                t = get_team_by_id(latest_team_id)
+                if t and t.get("town"):
+                    return t["town"]
+    except Exception:
+        pass
+    return ""
+
+
+def get_player_by_id(pid):
+    if not pid:
+        return None
+
+    try:
+        import datastore
+        ds_player = datastore.get_cached_player(pid)
+        if ds_player:
+            return ds_player
+    except Exception:
+        pass
+
+    try:
+        resp = requests.get(f"{API_URL}/players/{pid}", headers={"Accept": "application/json"})
+        if resp.ok:
+            p = resp.json()
+            if isinstance(p, dict) and "id" in p:
+                pdata = {
+                    "id": p["id"],
+                    "name": p.get("name", ""),
+                    "surname": p.get("surname", ""),
+                    "patronymic": p.get("patronymic", ""),
+                    "town": get_player_town(p["id"]),
+                }
+                try:
+                    import datastore
+                    datastore.cache_player(pid, pdata)
+                except Exception:
+                    pass
+                return pdata
+    except Exception as e:
+        print(f"Error fetching player id={pid}: {e}")
+    return None
+
+
+def get_team_players(team_id):
+    t0 = time.perf_counter()
+    if not team_id:
+        return []
+    players_dict = {}
+    try:
+        resp = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 100}, headers={"Accept": "application/json"})
+        if resp.ok:
+            data = resp.json()
+            if isinstance(data, list):
+                player_ids = []
+                for item in data:
+                    if isinstance(item, dict) and "idplayer" in item and item["idplayer"]:
+                        if item["idplayer"] not in player_ids:
+                            player_ids.append(item["idplayer"])
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                    fetched_players = list(executor.map(get_player_by_id, player_ids[:20]))
+                    for p in fetched_players:
+                        if p and isinstance(p, dict) and "id" in p:
+                            players_dict[p["id"]] = p
+    except Exception as e:
+        print(f"Error fetching team players for team_id={team_id}: {e}")
+    result = list(players_dict.values())
+    debug.log("rating_api.get_team_players", t0, f"team_id={team_id} -> {len(result)}")
+    return result
+
+
+def search_players(query):
+    t0 = time.perf_counter()
+    query = str(query).strip()
+    if not query:
+        return []
+    
+    words = query.split()
+    results = {}
+
+    def do_search(params):
+        try:
+            resp = requests.get(f"{API_URL}/players", params={**params, "itemsPerPage": 10}, headers={"Accept": "application/json"})
+            if resp.ok and isinstance(resp.json(), list):
+                for p in resp.json():
+                    if isinstance(p, dict) and "id" in p and p["id"] not in results:
+                        pdata = {
+                            "id": p["id"],
+                            "name": p.get("name", ""),
+                            "surname": p.get("surname", ""),
+                            "patronymic": p.get("patronymic", ""),
+                            "town": "",
+                        }
+                        results[p["id"]] = pdata
+        except Exception as e:
+            print(f"Error in search request {params}: {e}")
+
+    try:
+        if len(words) == 1:
+            if words[0].isdigit():
+                p_by_id = get_player_by_id(int(words[0]))
+                if p_by_id:
+                    results[p_by_id["id"]] = p_by_id
+            do_search({"surname": words[0]})
+            if len(results) < 5:
+                do_search({"name": words[0]})
+        elif len(words) == 2:
+            w0, w1 = words[0], words[1]
+            do_search({"surname": w1, "name": w0})
+            do_search({"surname": w0, "name": w1})
+        elif len(words) >= 3:
+            w0, w1, w2 = words[0], words[1], words[2]
+            do_search({"surname": w0, "name": w1, "patronymic": w2})
+            do_search({"surname": w2, "name": w0, "patronymic": w1})
+            if not results:
+                do_search({"surname": w1, "name": w0})
+                do_search({"surname": w0, "name": w1})
+    except Exception as e:
+        print(f"Error searching players query={query}: {e}")
+
+    if results:
+        pids = list(results.keys())[:10]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            towns = list(executor.map(get_player_town, pids))
+            for pid, town in zip(pids, towns):
+                if town and pid in results:
+                    results[pid]["town"] = town
+                    try:
+                        import datastore
+                        datastore.cache_player(pid, results[pid])
+                    except Exception:
+                        pass
+
+    result = list(results.values())
+    debug.log("rating_api.search_players", t0, f"query={query} -> {len(result)}")
+    return result
+
+
 def main():
+
     parser = argparse.ArgumentParser(description="This is a help message")
     parser.add_argument(
         "-d", "--date", type=str, required=True, help="Start date in YYYYMMDD format"

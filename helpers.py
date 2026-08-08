@@ -74,52 +74,62 @@ def get_person_form(person):
     return person_form, is_feminine
 
 def parse_date(input_date, timezone):
-    try:
-        result_date = datetime.datetime.strptime(input_date, "%Y%m%d").date()
-        if debug.get_debug():
-            print("parse_date:", input_date, "->", result_date)
-        return result_date, False
-    except:
-        normal_date = (
-            input_date.replace("понедельника", "понедельник")
-            .replace("вторника", "вторник")
-            .replace("среды", "среда")
-            .replace("четверга", "четверг")
-            .replace("пятницы", "пятница")
-            .replace("субботы", "суббота")
-            .replace("воскресенья", "воскресенье")
-        )
+    input_str = input_date.strip().lower()
 
-        result_date = parse(
-            normal_date,
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "TIMEZONE": timezone,
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "NORMALIZE": True,
-            },
-        )
-        if debug.get_debug():
-            print("parse_date:", input_date, "->", result_date)
-        if not result_date:
-            return datetime.datetime.now().date(), False
-        week_delta = relativedelta(days=7)
-        if (
-            "понедельник" in normal_date
-            or "вторник" in normal_date
-            or "среда" in normal_date
-            or "четверг" in normal_date
-            or "пятница" in normal_date
-            or "суббота" in normal_date
-            or "воскресенье" in normal_date
-        ) and (result_date - week_delta).replace(
-            tzinfo=pytz.UTC
-        ) > datetime.datetime.now().replace(
-            tzinfo=pytz.UTC
-        ):
-            result_date -= week_delta
+    for fmt in ("%Y%m%d", "%Y-%m-%d", "%d.%m.%Y", "%d.%m"):
+        try:
+            dt = datetime.datetime.strptime(input_str, fmt)
+            if fmt == "%d.%m":
+                now_tz = datetime.datetime.now(pytz.timezone(resolve_timezone(timezone)))
+                dt = dt.replace(year=now_tz.year)
+            if debug.get_debug():
+                print("parse_date:", input_date, "->", dt.date())
+            return dt.date(), False
+        except ValueError:
+            pass
 
-        return result_date, True
+    normal_date = (
+        input_str.replace("понедельника", "понедельник")
+        .replace("вторника", "вторник")
+        .replace("среды", "среда")
+        .replace("четверга", "четверг")
+        .replace("пятницы", "пятница")
+        .replace("субботы", "суббота")
+        .replace("воскресенья", "воскресенье")
+    )
+
+    result_date = parse(
+        normal_date,
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": timezone,
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "NORMALIZE": True,
+        },
+    )
+    if debug.get_debug():
+        print("parse_date:", input_date, "->", result_date)
+    if not result_date:
+        return datetime.datetime.now().date(), False
+    week_delta = relativedelta(days=7)
+    if (
+        "понедельник" in normal_date
+        or "вторник" in normal_date
+        or "среда" in normal_date
+        or "четверг" in normal_date
+        or "пятница" in normal_date
+        or "суббота" in normal_date
+        or "воскресенье" in normal_date
+    ) and (result_date - week_delta).replace(
+        tzinfo=pytz.UTC
+    ) > datetime.datetime.now().replace(
+        tzinfo=pytz.UTC
+    ):
+        result_date -= week_delta
+
+    return result_date, True
+
+import html
 
 def get_tourns_representations(tourns):
     tourns_to_save = []
@@ -128,35 +138,37 @@ def get_tourns_representations(tourns):
     for tourn in sorted(
         tourns, key=lambda r: (r["rating"], r["difficulty"]), reverse=True
     ):
-        title = tourn["name"].strip()
+        title_raw = tourn["name"].strip()
+        title = html.escape(title_raw)
         n_questions = (
             f'{tourn["num_questions"]}, ' if tourn["num_questions"] > 0 else ""
         )
         rating = "R, " if tourn["rating"] else ""
         difficulty = f'{tourn["difficulty"]}, ' if tourn["difficulty"] != 0 else ""
-        editors = tourn["editors"]
+        editors_raw = tourn["editors"]
+        editors = html.escape(editors_raw)
         url = f'https://rating.chgk.info/tournament/{tourn["id"]}'
         tourn_long = (
             f'<a href="{url}">{title}</a> ({n_questions}{rating}{difficulty}{editors})'
         )
         tourns_to_show.append(tourn_long)
-        tourn_short = f"{title} ({n_questions}{rating}{difficulty}{editors})"
+        tourn_short = f"{title_raw} ({n_questions}{rating}{difficulty}{editors_raw})"
         if len(tourn_short) > 100:
             cut_length = len(tourn_short) - 98
-            pos = editors[:-cut_length].rfind(",")
+            pos = editors_raw[:-cut_length].rfind(",")
             tourn_short = (
-                f"{title} ({n_questions}{rating}{difficulty}{editors[:pos]}...)"
+                f"{title_raw} ({n_questions}{rating}{difficulty}{editors_raw[:pos]}...)"
             )
             if len(tourn_short) > 100:
-                if len(editors) > 30:
+                if len(editors_raw) > 30:
                     editors_cut_length = 30
-                    editors_cut_pos = editors[:-editors_cut_length].rfind(",")
-                    post_title = f" ({n_questions}{rating}{difficulty}{editors[:editors_cut_pos]}...)"
+                    editors_cut_pos = editors_raw[:-editors_cut_length].rfind(",")
+                    post_title = f" ({n_questions}{rating}{difficulty}{editors_raw[:editors_cut_pos]}...)"
                 else:
-                    post_title = f" ({n_questions}{rating}{difficulty}{editors})"
+                    post_title = f" ({n_questions}{rating}{difficulty}{editors_raw})"
                 title_cut_length = 98 - len(post_title)
-                title_cut_pos = title[:title_cut_length].rfind(" ")
-                tourn_short = f"{title[:title_cut_pos]}...{post_title}"
+                title_cut_pos = title_raw[:title_cut_length].rfind(" ")
+                tourn_short = f"{title_raw[:title_cut_pos]}...{post_title}"
 
         tourns_to_save.append({"id": tourn["id"], "name": tourn_short})
     return tourns_to_show, tourns_to_save
@@ -212,3 +224,86 @@ def get_chat_venues(chat_id):
 
 def get_default_poll_closing_time():
     return datetime.datetime.now() + relativedelta(months=1)
+
+
+def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams):
+    lines = [
+        f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
+        "",
+        "📝 <b>Регистрация команд открыта!</b>",
+        "<i>Ответьте (reply) на это сообщение названием вашей команды для регистрации.</i>",
+        "<i>Для отмены ответьте <code>/unregister</code> или <code>отмена</code>.</i>",
+        "<i>Для сдачи состава перейдите в ЛС с ботом и нажмите <b>Старт</b>.</i>",
+        "",
+        f"<b>Зарегистрированные команды ({len(teams)}):</b>",
+    ]
+    if not teams:
+        lines.append("(пока нет поданных заявок)")
+    else:
+        for i, t in enumerate(teams, 1):
+            team_name = t.get("display_name") or t.get("team_name", "Команда")
+            username = t.get("username", "")
+            user_str = f" (@{username})" if username else ""
+            lines.append(f"{i}. {team_name}{user_str}")
+    return "\n".join(lines)
+
+
+def generate_roster_csv(teams_list):
+    """
+    Generates CSV string formatted for rating.chgk.info import:
+    idteam;команда;город;признак капитана (К|Б|Л);idplayer;Ф;И;О;
+    """
+    header = "idteam;команда;город;признак капитана (К|Б|Л);idplayer;Ф;И;О;"
+    rows = [header]
+    status_map = {"K": "К", "B": "Б", "L": "Л", "К": "К", "Б": "Б", "Л": "Л"}
+    for t in teams_list:
+        idteam = str(t.get("rating_team_id") or "")
+        team_name = (t.get("display_name") or t.get("team_name") or "").replace(";", ",")
+        town = (t.get("town") or "").replace(";", ",")
+        roster = t.get("roster", [])
+        for p in roster:
+            raw_st = p.get("status", "B")
+            status = status_map.get(raw_st, "Б")
+            idplayer = str(p.get("player_id") or "")
+            surname = (p.get("surname") or "").replace(";", ",")
+            name = (p.get("name") or "").replace(";", ",")
+            patronymic = (p.get("patronymic") or "").replace(";", ",")
+            row = f"{idteam};{team_name};{town};{status};{idplayer};{surname};{name};{patronymic};"
+            rows.append(row)
+    return "\n".join(rows)
+
+
+def get_registration_start_ts(reg):
+    if reg.get("start_time_ts"):
+        return reg["start_time_ts"]
+    
+    start_str = reg.get("start_time", "")
+    if start_str:
+        s = start_str.strip()
+        tz = pytz.timezone(resolve_timezone(None))
+        now_tz = datetime.datetime.now(tz)
+        year = now_tz.year
+        for fmt in ("%d.%m %H:%M", "%d.%m.%Y %H:%M", "%Y-%m-%d %H:%M", "%d.%m %H:%M:%S"):
+            try:
+                dt = datetime.datetime.strptime(s, fmt)
+                if fmt.startswith("%d.%m "):
+                    dt = dt.replace(year=year)
+                localized = tz.localize(dt)
+                return int(localized.timestamp())
+            except ValueError:
+                pass
+        try:
+            parsed_dt, _ = parse_date(start_str, "Europe/Berlin")
+            if isinstance(parsed_dt, datetime.datetime):
+                return int(parsed_dt.timestamp())
+            elif isinstance(parsed_dt, datetime.date):
+                return int(datetime.datetime.combine(parsed_dt, datetime.time(19, 0)).timestamp())
+        except Exception:
+            pass
+            
+    created_at = reg.get("created_at")
+    if isinstance(created_at, datetime.datetime):
+        return int(created_at.timestamp())
+    return None
+
+

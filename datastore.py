@@ -386,5 +386,413 @@ def cache_tournaments_batch(tournaments_data):
                 datastore_client.put_multi(chunk)
             print(f"[CACHE BATCH] Successfully cached {len(entities)} tournaments")
     except Exception as e:
-        print(f"[CACHE ERROR] cache_tournaments_batch failed: {e}")
+        print(f"Error in cache_tournaments_batch: {e}")
+
+
+def get_cached_player(pid):
+    if not pid:
+        return None
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("CachedPlayer", str(pid))
+        entity = datastore_client.get(key)
+        if entity and (entity.get("surname") or entity.get("name")):
+            return {
+                "id": int(entity.get("player_id", pid)),
+                "name": entity.get("name", ""),
+                "surname": entity.get("surname", ""),
+                "patronymic": entity.get("patronymic", ""),
+                "town": entity.get("town", ""),
+            }
+    except Exception as e:
+        print(f"Error reading CachedPlayer pid={pid}: {e}")
+    return None
+
+
+def cache_player(pid, pdata):
+    if not pid or not pdata:
+        return
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("CachedPlayer", str(pid))
+        entity = datastore.Entity(key=key)
+        entity.update({
+            "player_id": int(pid),
+            "name": pdata.get("name", ""),
+            "surname": pdata.get("surname", ""),
+            "patronymic": pdata.get("patronymic", ""),
+            "town": pdata.get("town", ""),
+            "cached_at": datetime.datetime.now(pytz.utc),
+        })
+        datastore_client.put(entity)
+    except Exception as e:
+        print(f"Error writing CachedPlayer pid={pid}: {e}")
+
+
+# --- Team Registration & Roster Functions ---
+
+def add_team_registration(chat_id, thread_id, sync_req_id, message_id, tourn_name, representative_text="", narrator_text="", start_time="", start_time_ts=None, created_by_user_id=None):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    entity = datastore.Entity(key=key, exclude_from_indexes=("teams",))
+    entity.update({
+        "chat_id": chat_id,
+        "thread_id": thread_id,
+        "sync_req_id": str(sync_req_id),
+        "message_id": message_id,
+        "tourn_name": tourn_name,
+        "representative_text": representative_text,
+        "narrator_text": narrator_text,
+        "start_time": start_time,
+        "start_time_ts": start_time_ts,
+        "created_by_user_id": created_by_user_id,
+        "teams": [],
+        "status": "active",
+        "created_at": datetime.datetime.now(pytz.utc),
+    })
+    datastore_client.put(entity)
+    return entity
+
+
+def get_team_registration(chat_id, sync_req_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    return datastore_client.get(key)
+
+
+def get_team_registration_by_msg(chat_id, message_id):
+    datastore_client = get_datastore_client()
+    query = datastore_client.query(kind="TeamRegistration")
+    query.add_filter(filter=PropertyFilter("chat_id", "=", chat_id))
+    query.add_filter(filter=PropertyFilter("message_id", "=", message_id))
+    results = list(query.fetch(limit=1))
+    return results[0] if results else None
+
+
+def register_team_in_ds(chat_id, sync_req_id, team_name, user_id, username):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            return None
+        teams = list(entity.get("teams", []))
+        
+        # Check if user already registered a team
+        updated = False
+        for team in teams:
+            if team.get("user_id") == user_id:
+                team["team_name"] = team_name
+                team["username"] = username
+                team["registered_at"] = datetime.datetime.now(pytz.utc).isoformat()
+                updated = True
+                break
+                
+        if not updated:
+            teams.append({
+                "team_name": team_name,
+                "user_id": user_id,
+                "username": username,
+                "registered_at": datetime.datetime.now(pytz.utc).isoformat(),
+                "rating_team_id": None,
+                "display_name": team_name,
+                "roster": [],
+            })
+            
+        entity["teams"] = teams
+        datastore_client.put(entity)
+        return entity
+
+
+def unregister_team_in_ds(chat_id, sync_req_id, user_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            return None
+        teams = list(entity.get("teams", []))
+        new_teams = [t for t in teams if t.get("user_id") != user_id]
+        entity["teams"] = new_teams
+        datastore_client.put(entity)
+        return entity
+
+
+def get_user_active_registrations(user_id):
+    datastore_client = get_datastore_client()
+    query = datastore_client.query(kind="TeamRegistration")
+    query.add_filter(filter=PropertyFilter("status", "=", "active"))
+    active_regs = []
+    for entity in query.fetch():
+        teams = entity.get("teams", [])
+        for team in teams:
+            if team.get("user_id") == user_id:
+                active_regs.append({
+                    "registration_key": entity.key.name,
+                    "chat_id": entity.get("chat_id"),
+                    "sync_req_id": entity.get("sync_req_id"),
+                    "tourn_name": entity.get("tourn_name"),
+                    "team": team,
+                })
+                break
+    return active_regs
+
+
+def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team_name, display_name, roster, town=None):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            return None
+        teams = list(entity.get("teams", []))
+        for team in teams:
+            if team.get("user_id") == user_id:
+                if rating_team_id is not None:
+                    team["rating_team_id"] = rating_team_id
+                if team_name:
+                    team["team_name"] = team_name
+                if display_name:
+                    team["display_name"] = display_name
+                if town:
+                    team["town"] = town
+                team["roster"] = roster
+                team["roster_submitted"] = True if roster else False
+                team["submitted_at"] = datetime.datetime.now(pytz.utc).isoformat()
+                break
+        entity["teams"] = teams
+        datastore_client.put(entity)
+        return entity
+
+
+def get_all_active_registrations(chat_id=None):
+    datastore_client = get_datastore_client()
+    query = datastore_client.query(kind="TeamRegistration")
+    query.add_filter(filter=PropertyFilter("status", "=", "active"))
+    if chat_id:
+        query.add_filter(filter=PropertyFilter("chat_id", "=", int(chat_id)))
+    return list(query.fetch())
+
+
+def update_team_registration(entity):
+    datastore_client = get_datastore_client()
+    datastore_client.put(entity)
+
+
+
+
+# --- User History Functions ---
+
+def get_user_history(user_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("UserHistory", str(user_id))
+    entity = datastore_client.get(key)
+    if not entity:
+        return {"teams": [], "players": []}
+    return {
+        "teams": list(entity.get("teams", [])),
+        "players": list(entity.get("players", [])),
+    }
+
+
+def add_user_history_team(user_id, team_id, team_name):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("UserHistory", str(user_id))
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            entity = datastore.Entity(key=key, exclude_from_indexes=("teams", "players"))
+            teams = []
+            players = []
+        else:
+            teams = list(entity.get("teams", []))
+            players = list(entity.get("players", []))
+
+        # Deduplicate team
+        existing = False
+        for t in teams:
+            if (team_id and t.get("team_id") == team_id) or (t.get("name", "").lower() == team_name.lower()):
+                t["team_id"] = team_id or t.get("team_id")
+                t["name"] = team_name
+                existing = True
+                break
+        if not existing:
+            teams.append({"team_id": team_id, "name": team_name})
+
+        entity["teams"] = teams
+        entity["players"] = players
+        datastore_client.put(entity)
+
+
+def add_user_history_player(user_id, player_id, name, surname, patronymic=""):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("UserHistory", str(user_id))
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            entity = datastore.Entity(key=key, exclude_from_indexes=("teams", "players"))
+            teams = []
+            players = []
+        else:
+            teams = list(entity.get("teams", []))
+            players = list(entity.get("players", []))
+
+        existing = False
+        for p in players:
+            if (player_id and p.get("player_id") == player_id) or (p.get("surname", "").lower() == surname.lower() and p.get("name", "").lower() == name.lower()):
+                p["player_id"] = player_id or p.get("player_id")
+                p["name"] = name
+                p["surname"] = surname
+                p["patronymic"] = patronymic
+                existing = True
+                break
+
+        if not existing:
+            players.append({
+                "player_id": player_id,
+                "name": name,
+                "surname": surname,
+                "patronymic": patronymic,
+            })
+
+        entity["teams"] = teams
+        entity["players"] = players
+        datastore_client.put(entity)
+
+
+# --- User State Functions for PM Dialogs ---
+
+def get_user_state(user_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("UserState", str(user_id))
+    entity = datastore_client.get(key)
+    if entity:
+        return entity.get("state"), entity.get("context_data", {})
+    return None, {}
+
+
+def set_user_state(user_id, state_name, context_data=None):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("UserState", str(user_id))
+    entity = datastore.Entity(key=key, exclude_from_indexes=("context_data",))
+    entity.update({
+        "state": state_name,
+        "context_data": context_data or {},
+        "updated_at": datetime.datetime.now(pytz.utc),
+    })
+    datastore_client.put(entity)
+
+
+def clear_user_state(user_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("UserState", str(user_id))
+    datastore_client.delete(key)
+
+
+# --- UserMapping Functions (Telegram User ID <-> Rating Player ID) ---
+
+def get_user_mapping(user_id):
+    if not user_id:
+        return None
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("UserMapping", str(user_id))
+        entity = datastore_client.get(key)
+        if entity:
+            return {
+                "telegram_user_id": int(entity.get("telegram_user_id", user_id)),
+                "rating_player_id": entity.get("rating_player_id"),
+                "name": entity.get("name", ""),
+                "surname": entity.get("surname", ""),
+                "patronymic": entity.get("patronymic", ""),
+                "town": entity.get("town", ""),
+                "username": entity.get("username", ""),
+            }
+    except Exception as e:
+        print(f"Error reading UserMapping for user_id={user_id}: {e}")
+    return None
+
+
+def set_user_mapping(user_id, rating_player_id, name, surname, patronymic="", town="", username=""):
+    if not user_id:
+        return None
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("UserMapping", str(user_id))
+        entity = datastore.Entity(key=key)
+        entity.update({
+            "telegram_user_id": int(user_id),
+            "rating_player_id": int(rating_player_id) if rating_player_id else None,
+            "name": name,
+            "surname": surname,
+            "patronymic": patronymic,
+            "town": town,
+            "username": username,
+            "updated_at": datetime.datetime.now(pytz.utc),
+        })
+        datastore_client.put(entity)
+        return entity
+    except Exception as e:
+        print(f"Error saving UserMapping for user_id={user_id}: {e}")
+    return None
+
+
+def find_user_by_rating_id(rating_player_id):
+    if not rating_player_id:
+        return None
+    try:
+        datastore_client = get_datastore_client()
+        query = datastore_client.query(kind="UserMapping")
+        query.add_filter(filter=PropertyFilter("rating_player_id", "=", int(rating_player_id)))
+        results = list(query.fetch(limit=1))
+        if results:
+            e = results[0]
+            return {
+                "telegram_user_id": int(e.get("telegram_user_id")),
+                "rating_player_id": e.get("rating_player_id"),
+                "name": e.get("name", ""),
+                "surname": e.get("surname", ""),
+                "patronymic": e.get("patronymic", ""),
+                "town": e.get("town", ""),
+            }
+    except Exception as e:
+        print(f"Error finding user by rating_id={rating_player_id}: {e}")
+    return None
+
+
+def is_user_representative(reg_entity, user_id):
+    if not user_id or not reg_entity:
+        return False
+    if reg_entity.get("created_by_user_id") == user_id:
+        return True
+
+    mapping = get_user_mapping(user_id)
+    rep_text = reg_entity.get("representative_text", "").lower()
+    if mapping:
+        r_id = mapping.get("rating_player_id")
+        if r_id and str(r_id) in rep_text:
+            return True
+        full_name = f"{mapping.get('name', '')} {mapping.get('surname', '')}".strip().lower()
+        rev_name = f"{mapping.get('surname', '')} {mapping.get('name', '')}".strip().lower()
+        if (full_name and full_name in rep_text) or (rev_name and rev_name in rep_text):
+            return True
+
+    return False
+
+
+def get_user_representative_registrations(user_id):
+    datastore_client = get_datastore_client()
+    query = datastore_client.query(kind="TeamRegistration")
+    query.add_filter(filter=PropertyFilter("status", "=", "active"))
+    rep_regs = []
+    seen_keys = set()
+    for entity in query.fetch():
+        key_str = entity.key.name or str(entity.key.id)
+        if key_str in seen_keys:
+            continue
+        if is_user_representative(entity, user_id) or any(t.get("user_id") == user_id for t in entity.get("teams", [])):
+            rep_regs.append(entity)
+            seen_keys.add(key_str)
+    return rep_regs
+
 
