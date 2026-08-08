@@ -588,6 +588,27 @@ def reset_unsubmitted_reminders(chat_id, sync_req_id):
         return entity, notified_users
 
 
+def reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            return None, None
+        teams = list(entity.get("teams", []))
+        rejected_team_name = None
+        for team in teams:
+            if team.get("user_id") == target_user_id:
+                team["roster_submitted"] = False
+                team["reminders_count"] = 0
+                team["last_reminder_ts"] = 0
+                rejected_team_name = team.get("display_name") or team.get("team_name", "Команда")
+                break
+        entity["teams"] = teams
+        datastore_client.put(entity)
+        return entity, rejected_team_name
+
+
 def get_all_active_registrations(chat_id=None):
     datastore_client = get_datastore_client()
     query = datastore_client.query(kind="TeamRegistration")

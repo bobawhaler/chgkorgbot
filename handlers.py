@@ -763,7 +763,45 @@ def handle_callback_query(cq):
                 f"Для указания состава напишите /roster в ЛС боту."
             )
             telegram_api.send_message(group_chat_id, None, group_msg, formatted=True)
-            telegram_api.answer_callback_query(cq_id, text=f"🔔 Отправлено {count_sent} напоминаний капитанам!", show_alert=True)
+    elif action == "reject_team":
+        if len(parts) >= 5:
+            sync_req_id = parts[2]
+            target_uid = int(parts[3])
+            group_chat_id = int(parts[4])
+            reg_entity, rejected_tname = datastore.reject_team_roster_in_ds(group_chat_id, sync_req_id, target_uid)
+            tourn_name = reg_entity.get("tourn_name", "турнир") if reg_entity else "турнир"
+            tname_str = rejected_tname or "вашей команды"
+            
+            pm_msg = (
+                f"⚠️ <b>Запрос исправления состава от представителя площадки!</b>\n\n"
+                f"Представитель площадки вернул состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b> на доработку.\n\n"
+                f"Пожалуйста, проверьте и скорректируйте состав. Отправьте /roster в этот личный чат с ботом для редактирования."
+            )
+            telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
+            telegram_api.answer_callback_query(cq_id, text=f"↩️ Состав команды «{tname_str}» возвращен на доработку!", show_alert=True)
+            handle_export_roster(chat_id)
+
+    elif action == "remind_team":
+        if len(parts) >= 5:
+            sync_req_id = parts[2]
+            target_uid = int(parts[3])
+            group_chat_id = int(parts[4])
+            reg_entity = datastore.get_team_registration(group_chat_id, sync_req_id)
+            tourn_name = reg_entity.get("tourn_name", "турнир") if reg_entity else "турнир"
+            tname_str = "команды"
+            if reg_entity:
+                for t in reg_entity.get("teams", []):
+                    if t.get("user_id") == target_uid:
+                        tname_str = t.get("display_name") or t.get("team_name", "команды")
+                        break
+            
+            pm_msg = (
+                f"⏰ <b>Напоминание от представителя площадки!</b>\n\n"
+                f"Представитель площадки запрашивает состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b>.\n\n"
+                f"Пожалуйста, отправьте /roster в этот личный чат с ботом для указания состава."
+            )
+            telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
+            telegram_api.answer_callback_query(cq_id, text=f"🔔 Напоминание отправлено капитану команды «{tname_str}»!", show_alert=True)
 
 
 def handle_export_roster(chat_id, thread_id=None):
@@ -831,10 +869,23 @@ def handle_export_roster(chat_id, thread_id=None):
 
         keyboard = []
         if teams:
+            for t in teams:
+                t_disp = t.get("display_name") or t.get("team_name", "Команда")
+                uid = t.get("user_id")
+                r_list = t.get("roster", [])
+                is_sub = t.get("roster_submitted") or len(r_list) > 0
+                if uid:
+                    if is_sub:
+                        cb = f"roster:reject_team:{sync_req_id}:{uid}:{reg.get('chat_id')}"
+                        keyboard.append([{"text": f"↩️ Вернуть на доработку: {t_disp}", "callback_data": cb}])
+                    else:
+                        cb = f"roster:remind_team:{sync_req_id}:{uid}:{reg.get('chat_id')}"
+                        keyboard.append([{"text": f"🔔 Напомнить в ЛС: {t_disp}", "callback_data": cb}])
+
             cb_csv = f"roster:export_csv:{sync_req_id}:{reg.get('chat_id')}"
             cb_remind = f"roster:remind_unsubmitted:{sync_req_id}:{reg.get('chat_id')}"
             keyboard.append([{"text": "📥 Скачать CSV для сайта рейтинга", "callback_data": cb_csv}])
-            keyboard.append([{"text": "🔔 Напомнить не сдавшим / Возобновить", "callback_data": cb_remind}])
+            keyboard.append([{"text": "🔔 Напомнить всем не сдавшим", "callback_data": cb_remind}])
 
         telegram_api.send_message(chat_id, thread_id, "\n".join(lines), formatted=True, reply_markup={"inline_keyboard": keyboard})
 
@@ -988,7 +1039,7 @@ def handle_private_message(body):
             t_name = reg_info["team"].get("display_name") or reg_info["team"].get("team_name")
             tourn_name = reg_info.get("tourn_name")
             cb = f"roster:sel_reg:{reg_info['sync_req_id']}:{reg_info['chat_id']}"
-            keyboard.append([{"text": f"📝 {t_name} — {tourn_name}", "callback_data": cb}])
+            keyboard.append([{"text": f"🏆 {tourn_name} — {t_name}", "callback_data": cb}])
 
         telegram_api.send_message(chat_id, None, "Выберите команду для указания/редактирования состава:", formatted=True, reply_markup={"inline_keyboard": keyboard})
         return True
@@ -1070,7 +1121,7 @@ def handle_private_message(body):
             t_name = reg_info["team"].get("display_name") or reg_info["team"].get("team_name")
             tourn_name = reg_info.get("tourn_name")
             cb = f"roster:sel_reg:{reg_info['sync_req_id']}:{reg_info['chat_id']}"
-            keyboard.append([{"text": f"📝 {t_name} — {tourn_name}", "callback_data": cb}])
+            keyboard.append([{"text": f"🏆 {tourn_name} — {t_name}", "callback_data": cb}])
         telegram_api.send_message(chat_id, None, "Выберите заявку команды для настройки состава:", formatted=True, reply_markup={"inline_keyboard": keyboard})
         return True
 
@@ -1093,8 +1144,11 @@ def handle_private_message(body):
             "• <code>/setmyid &lt;id_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка вашего профиля на сайте рейтинга\n"
             "• <code>/cancel</code> (или <code>/stop</code>, <code>отмена</code>) — выход из любого режима ввода текста\n\n"
             "<b>Настройки:</b>\n"
+            "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок команд\n"
             "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
-            "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата\n\n"
+            "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата (напр. Europe/Moscow)\n"
+            "• <code>/setmindifficulty &lt;N&gt;</code> — мин. сложность турниров\n"
+            "• <code>/setmaxdifficulty &lt;N&gt;</code> — макс. сложность турниров\n\n"
             "<b>Системные:</b>\n"
             "• <code>/help</code> — эта справка"
         )
@@ -1527,8 +1581,11 @@ def command_handler(body):
                         "• <code>/setmyid &lt;id_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка вашего профиля на сайте рейтинга\n"
                         "• <code>/cancel</code> (или <code>/stop</code>, <code>отмена</code>) — выход из любого режима ввода текста\n\n"
                         "<b>Настройки:</b>\n"
+                        "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок команд\n"
                         "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
-                        "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата\n\n"
+                        "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата (напр. Europe/Moscow)\n"
+                        "• <code>/setmindifficulty &lt;N&gt;</code> — мин. сложность турниров\n"
+                        "• <code>/setmaxdifficulty &lt;N&gt;</code> — макс. сложность турниров\n\n"
                         "<b>Системные:</b>\n"
                         "• <code>/help</code> — эта справка"
                     )
