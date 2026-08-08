@@ -292,11 +292,10 @@ def format_team_registration_text(tourn_name, url, representative_text, narrator
 
 def generate_roster_csv(teams_list):
     """
-    Generates CSV string formatted for rating.chgk.info import:
+    Generates CSV string formatted for rating.chgk.info import without header row:
     idteam;команда;город;признак капитана (К|Б|Л);idplayer;Ф;И;О;
     """
-    header = "idteam;команда;город;признак капитана (К|Б|Л);idplayer;Ф;И;О;"
-    rows = [header]
+    rows = []
     status_map = {"K": "К", "B": "Б", "L": "Л", "К": "К", "Б": "Б", "Л": "Л"}
     for t in teams_list:
         idteam = str(t.get("rating_team_id") or "")

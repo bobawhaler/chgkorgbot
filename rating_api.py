@@ -487,9 +487,11 @@ def get_team_players(team_id):
                             members = []
                             if isinstance(res_list, list):
                                 for res in res_list:
-                                    for member in res.get("teamMembers", []):
-                                        if member.get("player") and member["player"].get("id"):
-                                            members.append(member["player"])
+                                    res_team_id = res.get("team", {}).get("id") if isinstance(res.get("team"), dict) else res.get("idteam")
+                                    if str(res_team_id) == str(team_id):
+                                        for member in res.get("teamMembers", []):
+                                            if member.get("player") and member["player"].get("id"):
+                                                members.append(member["player"])
                             return members
                     except Exception:
                         pass

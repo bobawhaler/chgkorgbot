@@ -565,6 +565,29 @@ def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team
         return entity
 
 
+def reset_unsubmitted_reminders(chat_id, sync_req_id):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            return None, []
+        teams = list(entity.get("teams", []))
+        notified_users = []
+        for team in teams:
+            team["roster_submitted"] = False
+            team["reminders_count"] = 0
+            team["last_reminder_ts"] = 0
+            if team.get("user_id"):
+                notified_users.append({
+                    "user_id": team["user_id"],
+                    "team_name": team.get("display_name") or team.get("team_name", "Команда")
+                })
+        entity["teams"] = teams
+        datastore_client.put(entity)
+        return entity, notified_users
+
+
 def get_all_active_registrations(chat_id=None):
     datastore_client = get_datastore_client()
     query = datastore_client.query(kind="TeamRegistration")

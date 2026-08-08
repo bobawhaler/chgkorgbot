@@ -335,6 +335,7 @@ def render_roster_ui(chat_id, user_id, context_data, message_id=None):
 
     candidates = list(candidates_map.values())
     candidates.sort(key=lambda c: c["score"], reverse=True)
+    candidates = candidates[:36]
 
     if candidates:
         page_size = 6
@@ -730,23 +731,74 @@ def handle_callback_query(cq):
         lines.append("\nВы можете в любой момент изменить его, отправив /roster.")
         saved_text = "\n".join(lines)
 
-        telegram_api.edit_message_text(chat_id, message_id, saved_text, formatted=True)
+        keyboard = []
+        if sync_req_id and chat_id_group:
+            keyboard.append([{"text": "📋 Изменить состав", "callback_data": f"roster:sel_reg:{sync_req_id}:{chat_id_group}"}])
+
+        telegram_api.edit_message_text(chat_id, message_id, saved_text, formatted=True, reply_markup={"inline_keyboard": keyboard} if keyboard else None)
+
+    elif action == "remind_unsubmitted":
+        if len(parts) >= 4:
+            sync_req_id = parts[2]
+            group_chat_id = int(parts[3])
+            reg_entity, notified_teams = datastore.reset_unsubmitted_reminders(group_chat_id, sync_req_id)
+            tourn_name = reg_entity.get("tourn_name", "турнир") if reg_entity else "турнир"
+            
+            count_sent = 0
+            for item in notified_teams:
+                uid = item["user_id"]
+                tname = item["team_name"]
+                pm_msg = (
+                    f"⏰ <b>Напоминание от представителя площадки!</b>\n\n"
+                    f"Представитель площадки запрашивает сдачу/проверку состава вашей команды <b>\"{tname}\"</b> на турнир <b>\"{tourn_name}\"</b>.\n\n"
+                    f"Пожалуйста, отправьте /roster в этот личный чат с ботом для забора состава."
+                )
+                res = telegram_api.send_message(uid, None, pm_msg, formatted=True)
+                if res and res.ok:
+                    count_sent += 1
+
+            group_msg = (
+                f"🔔 <b>Напоминание представителя площадки по турниру \"{tourn_name}\"!</b>\n\n"
+                f"Представитель возобновил сбор составов. Капитанам команд необходимо проверить и сдать составы.\n"
+                f"Для указания состава напишите /roster в ЛС боту."
+            )
+            telegram_api.send_message(group_chat_id, None, group_msg, formatted=True)
+            telegram_api.answer_callback_query(cq_id, text=f"🔔 Отправлено {count_sent} напоминаний капитанам!", show_alert=True)
 
 
 def handle_export_roster(chat_id, thread_id=None):
+    now_ts = int(time.time())
     if chat_id > 0:
-        active_regs = datastore.get_user_representative_registrations(chat_id)
+        raw_regs = datastore.get_user_representative_registrations(chat_id)
     else:
-        active_regs = datastore.get_all_active_registrations(chat_id)
+        raw_regs = datastore.get_all_active_registrations(chat_id)
 
-    if not active_regs:
+    valid_regs = []
+    seen_keys = set()
+    for reg in raw_regs:
+        sync_req_id = reg.get("sync_req_id")
+        reg_chat_id = reg.get("chat_id")
+        key = (sync_req_id, reg_chat_id)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        start_ts = helpers.get_registration_start_ts(reg)
+        if start_ts and (now_ts - start_ts > 172800):
+            reg["status"] = "archived"
+            datastore.update_team_registration(reg)
+            continue
+
+        valid_regs.append(reg)
+
+    if not valid_regs:
         if chat_id > 0:
-            telegram_api.send_message(chat_id, thread_id, "Вам пока не доступны заявки команд для контроля составов.\n\nИспользуйте /setmyid <ваш ID на сайте рейтинга> для привязки вашего аккаунта представителя.", formatted=True)
+            telegram_api.send_message(chat_id, thread_id, "Вам пока не доступны активные заявки команд на ближайшие турниры.\n\nИспользуйте /setmyid <ваш ID на сайте рейтинга> для привязки вашего аккаунта представителя.", formatted=True)
         else:
-            telegram_api.send_message(chat_id, thread_id, "В данном чате пока нет активных открытых заявок на турниры.", formatted=True)
+            telegram_api.send_message(chat_id, thread_id, "В данном чате пока нет активных открытых заявок на ближайшие турниры.", formatted=True)
         return
 
-    for reg in active_regs:
+    for reg in valid_regs:
         sync_req_id = reg.get("sync_req_id")
         tourn_name = reg.get("tourn_name", "Турнир")
         teams = reg.get("teams", [])
@@ -779,8 +831,10 @@ def handle_export_roster(chat_id, thread_id=None):
 
         keyboard = []
         if teams:
-            cb = f"roster:export_csv:{sync_req_id}:{reg.get('chat_id')}"
-            keyboard.append([{"text": "📥 Скачать CSV для сайта рейтинга", "callback_data": cb}])
+            cb_csv = f"roster:export_csv:{sync_req_id}:{reg.get('chat_id')}"
+            cb_remind = f"roster:remind_unsubmitted:{sync_req_id}:{reg.get('chat_id')}"
+            keyboard.append([{"text": "📥 Скачать CSV для сайта рейтинга", "callback_data": cb_csv}])
+            keyboard.append([{"text": "🔔 Напомнить не сдавшим / Возобновить", "callback_data": cb_remind}])
 
         telegram_api.send_message(chat_id, thread_id, "\n".join(lines), formatted=True, reply_markup={"inline_keyboard": keyboard})
 
