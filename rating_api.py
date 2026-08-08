@@ -336,14 +336,46 @@ def search_teams(query):
                     result.append({"id": data["id"], "name": data.get("name", ""), "town": town_name})
                     return result
 
-        resp = requests.get(f"{API_URL}/teams", params={"name": query, "itemsPerPage": 10}, headers={"Accept": "application/json"})
+        resp = requests.get(f"{API_URL}/teams", params={"name": query, "itemsPerPage": 15}, headers={"Accept": "application/json"})
         if resp.ok:
             data = resp.json()
             if isinstance(data, list):
+                teams_raw = []
                 for item in data:
                     town = item.get("town", {})
                     town_name = town.get("name", "") if isinstance(town, dict) else ""
-                    result.append({"id": item.get("id"), "name": item.get("name", ""), "town": town_name})
+                    teams_raw.append({"id": item.get("id"), "name": item.get("name", ""), "town": town_name})
+
+                def fetch_team_metrics(team_item):
+                    team_id = team_item["id"]
+                    latest_season = 0
+                    tourn_count = 0
+                    try:
+                        r_s = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 100}, headers={"Accept": "application/json"}, timeout=3)
+                        if r_s.ok:
+                            seasons = r_s.json()
+                            if isinstance(seasons, list) and seasons:
+                                latest_season = max((s.get("idseason", 0) for s in seasons if isinstance(s, dict)), default=0)
+                        r_t = requests.get(f"{API_URL}/teams/{team_id}/tournaments", params={"itemsPerPage": 1000}, headers={"Accept": "application/json"}, timeout=3)
+                        if r_t.ok:
+                            tourns = r_t.json()
+                            if isinstance(tourns, list):
+                                tourn_count = len(tourns)
+                    except Exception:
+                        pass
+                    return team_id, latest_season, tourn_count
+
+                if teams_raw:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                        metrics_list = list(executor.map(fetch_team_metrics, teams_raw))
+                    metrics_map = {m[0]: (m[1], m[2]) for m in metrics_list}
+                    for t in teams_raw:
+                        s_val, tc_val = metrics_map.get(t["id"], (0, 0))
+                        t["latest_season"] = s_val
+                        t["tourn_count"] = tc_val
+
+                    teams_raw.sort(key=lambda x: (x.get("latest_season", 0), x.get("tourn_count", 0)), reverse=True)
+                    result = teams_raw
     except Exception as e:
         print(f"Error searching teams query={query}: {e}")
     debug.log("rating_api.search_teams", t0, f"query={query} -> {len(result)}")
@@ -408,26 +440,113 @@ def get_team_players(team_id):
         return []
     players_dict = {}
     try:
+        # 1. Fetch recent season members (latest 2 seasons)
         resp = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 100}, headers={"Accept": "application/json"})
         if resp.ok:
             data = resp.json()
-            if isinstance(data, list):
+            if isinstance(data, list) and data:
+                max_season = max((item.get("idseason", 0) for item in data if isinstance(item, dict)), default=0)
+                recent_items = [item for item in data if isinstance(item, dict) and item.get("idseason", 0) >= max_season - 1]
+                recent_items.sort(key=lambda x: x.get("idseason", 0), reverse=True)
+
                 player_ids = []
-                for item in data:
-                    if isinstance(item, dict) and "idplayer" in item and item["idplayer"]:
-                        if item["idplayer"] not in player_ids:
-                            player_ids.append(item["idplayer"])
+                season_map = {}
+                for item in recent_items:
+                    pid = item.get("idplayer")
+                    if pid:
+                        if pid not in player_ids:
+                            player_ids.append(pid)
+                        season_map[pid] = max(season_map.get(pid, 0), item.get("idseason", 0))
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                    fetched_players = list(executor.map(get_player_by_id, player_ids[:20]))
+                    fetched_players = list(executor.map(get_player_by_id, player_ids[:30]))
                     for p in fetched_players:
                         if p and isinstance(p, dict) and "id" in p:
-                            players_dict[p["id"]] = p
+                            pid = p["id"]
+                            p_copy = dict(p)
+                            p_copy["season_recency"] = 2 if season_map.get(pid) == max_season else 1
+                            p_copy["tourn_count"] = 0
+                            p_copy["tourn_recency"] = 0
+                            players_dict[pid] = p_copy
+
+        # 2. Fetch players from recent tournaments played by team (last 30 tournaments / past year)
+        resp_t = requests.get(f"{API_URL}/teams/{team_id}/tournaments", params={"itemsPerPage": 100}, headers={"Accept": "application/json"})
+        if resp_t.ok:
+            tourns = resp_t.json()
+            if isinstance(tourns, list) and tourns:
+                latest_tourns = tourns[-30:]
+
+                def fetch_tourn_roster(t_item):
+                    tid = t_item.get("idtournament")
+                    if not tid:
+                        return []
+                    try:
+                        r_res = requests.get(f"{API_URL}/tournaments/{tid}/results", params={"team": team_id, "includeTeamMembers": 1}, headers={"Accept": "application/json"}, timeout=5)
+                        if r_res.ok:
+                            res_list = r_res.json()
+                            members = []
+                            if isinstance(res_list, list):
+                                for res in res_list:
+                                    for member in res.get("teamMembers", []):
+                                        if member.get("player") and member["player"].get("id"):
+                                            members.append(member["player"])
+                            return members
+                    except Exception:
+                        pass
+                    return []
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+                    all_rosters = list(executor.map(fetch_tourn_roster, latest_tourns))
+
+                for recency_idx, members in enumerate(all_rosters, 1):
+                    for p in members:
+                        pid = p["id"]
+                        if pid not in players_dict:
+                            players_dict[pid] = {
+                                "id": pid,
+                                "name": p.get("name", ""),
+                                "surname": p.get("surname", ""),
+                                "patronymic": p.get("patronymic", ""),
+                                "season_recency": 0,
+                                "tourn_count": 0,
+                                "tourn_recency": 0,
+                            }
+                        players_dict[pid]["tourn_count"] = players_dict[pid].get("tourn_count", 0) + 1
+                        players_dict[pid]["tourn_recency"] = max(players_dict[pid].get("tourn_recency", 0), recency_idx)
     except Exception as e:
         print(f"Error fetching team players for team_id={team_id}: {e}")
     result = list(players_dict.values())
     debug.log("rating_api.get_team_players", t0, f"team_id={team_id} -> {len(result)}")
     return result
+
+
+_base_players_cache = {}
+
+
+def get_team_base_players(team_id):
+    if not team_id:
+        return set(), None
+    if team_id in _base_players_cache:
+        return _base_players_cache[team_id]
+    try:
+        resp = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 100}, headers={"Accept": "application/json"})
+        if resp.ok:
+            data = resp.json()
+            if isinstance(data, list) and data:
+                max_season = max((item.get("idseason", 0) for item in data if isinstance(item, dict)), default=0)
+                base_items = [item for item in data if isinstance(item, dict) and item.get("idseason") == max_season and not item.get("dateRemoved")]
+                base_pids = {item["idplayer"] for item in base_items if item.get("idplayer")}
+                captain_id = None
+                for item in base_items:
+                    if item.get("playerNumber") == 1:
+                        captain_id = item.get("idplayer")
+                        break
+                res = (base_pids, captain_id)
+                _base_players_cache[team_id] = res
+                return res
+    except Exception as e:
+        print(f"Error fetching base players for team_id={team_id}: {e}")
+    return set(), None
 
 
 def search_players(query):
@@ -441,7 +560,7 @@ def search_players(query):
 
     def do_search(params):
         try:
-            resp = requests.get(f"{API_URL}/players", params={**params, "itemsPerPage": 10}, headers={"Accept": "application/json"})
+            resp = requests.get(f"{API_URL}/players", params={**params, "itemsPerPage": 15}, headers={"Accept": "application/json"})
             if resp.ok and isinstance(resp.json(), list):
                 for p in resp.json():
                     if isinstance(p, dict) and "id" in p and p["id"] not in results:
@@ -451,6 +570,8 @@ def search_players(query):
                             "surname": p.get("surname", ""),
                             "patronymic": p.get("patronymic", ""),
                             "town": "",
+                            "rating": 0,
+                            "tourn_count": 0,
                         }
                         results[p["id"]] = pdata
         except Exception as e:
@@ -479,20 +600,56 @@ def search_players(query):
     except Exception as e:
         print(f"Error searching players query={query}: {e}")
 
+    def fetch_player_metrics(pid):
+        rating = 0
+        tourn_count = 0
+        try:
+            r_t = requests.get(f"{API_URL}/players/{pid}/tournaments", params={"itemsPerPage": 100}, headers={"Accept": "application/json"}, timeout=3)
+            if r_t.ok:
+                tourns = r_t.json()
+                if isinstance(tourns, list):
+                    tourn_count = len(tourns)
+                    if tourns:
+                        latest_tid = tourns[-1].get("idtournament")
+                        team_id = tourns[-1].get("idteam")
+                        if latest_tid and team_id:
+                            r_res = requests.get(f"{API_URL}/tournaments/{latest_tid}/results", params={"team": team_id, "includeTeamMembers": 1}, headers={"Accept": "application/json"}, timeout=3)
+                            if r_res.ok:
+                                res = r_res.json()
+                                if isinstance(res, list):
+                                    for r_item in res:
+                                        for tm in r_item.get("teamMembers", []):
+                                            if tm.get("player") and tm["player"].get("id") == pid:
+                                                rating = tm.get("rating") or 0
+                                                break
+        except Exception:
+            pass
+        return pid, rating, tourn_count
+
     if results:
-        pids = list(results.keys())[:10]
+        pids = list(results.keys())[:15]
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             towns = list(executor.map(get_player_town, pids))
             for pid, town in zip(pids, towns):
                 if town and pid in results:
                     results[pid]["town"] = town
-                    try:
-                        import datastore
-                        datastore.cache_player(pid, results[pid])
-                    except Exception:
-                        pass
+
+            metrics = list(executor.map(fetch_player_metrics, pids))
+            for pid, rating, t_count in metrics:
+                if pid in results:
+                    results[pid]["rating"] = rating
+                    results[pid]["tourn_count"] = t_count
 
     result = list(results.values())
+    result.sort(key=lambda x: (x.get("rating", 0), x.get("tourn_count", 0)), reverse=True)
+
+    for p in result:
+        try:
+            import datastore
+            datastore.cache_player(p["id"], p)
+        except Exception:
+            pass
+
     debug.log("rating_api.search_players", t0, f"query={query} -> {len(result)}")
     return result
 

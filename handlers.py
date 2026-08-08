@@ -9,7 +9,6 @@ import helpers
 import datastore
 import debug
 
-ENABLE_TEST_COMMANDS = False  # Set to True to re-enable /testreg and /testroster debug commands
 
 def system_tic_handler():
     t0 = time.perf_counter()
@@ -240,24 +239,20 @@ def render_roster_ui(chat_id, user_id, context_data, message_id=None):
             {"text": "❌", "callback_data": f"roster:rem_player:{idx}"}
         ])
 
-    # 2. Hints
-    history = datastore.get_user_history(user_id)
-    history_players = history.get("players", [])
-    
-    team_players = []
-    if rating_team_id:
-        team_players = rating_api.get_team_players(rating_team_id)
-
+    # 2. Hints with ranking based on team activity & user history frequency + recency
     roster_pids = {p["player_id"] for p in roster if p.get("player_id")}
     roster_names = {f"{p.get('surname', '')} {p.get('name', '')}".lower() for p in roster}
-    
-    candidates = []
+
+    candidates_map = {}
+
+    # Self profile
     user_mapping = datastore.get_user_mapping(user_id)
     if user_mapping and user_mapping.get("rating_player_id"):
         my_pid = user_mapping["rating_player_id"]
         my_pname = f"{user_mapping.get('surname', '')} {user_mapping.get('name', '')}".strip()
         if my_pid not in roster_pids and my_pname.lower() not in roster_names:
-            candidates.append({
+            key = f"pid_{my_pid}"
+            candidates_map[key] = {
                 "pid": my_pid,
                 "name": user_mapping.get("name", ""),
                 "surname": user_mapping.get("surname", ""),
@@ -265,23 +260,81 @@ def render_roster_ui(chat_id, user_id, context_data, message_id=None):
                 "town": user_mapping.get("town", ""),
                 "pname": my_pname,
                 "is_self": True,
-            })
+                "score": 10000.0,
+            }
 
-    for p in history_players + team_players:
-        pid = p.get("id") or p.get("player_id")
-        pname = f"{p.get('surname', '')} {p.get('name', '')}".strip()
+    # Team players (recent seasons & tournaments)
+    if rating_team_id:
+        team_players = rating_api.get_team_players(rating_team_id)
+        for tp in team_players:
+            pid = tp.get("id") or tp.get("player_id")
+            pname = f"{tp.get('surname', '')} {tp.get('name', '')}".strip()
+            if (pid and pid in roster_pids) or (pname.lower() in roster_names):
+                continue
+            key = f"pid_{pid}" if pid else f"name_{pname.lower()}"
+            if key not in candidates_map:
+                candidates_map[key] = {
+                    "pid": pid,
+                    "name": tp.get("name", ""),
+                    "surname": tp.get("surname", ""),
+                    "patronymic": tp.get("patronymic", ""),
+                    "town": tp.get("town", ""),
+                    "pname": pname,
+                    "score": 0.0,
+                }
+            t_score = 0.0
+            t_score += tp.get("tourn_count", 0) * 50.0
+            t_score += tp.get("tourn_recency", 0) * 20.0
+            t_score += tp.get("season_recency", 0) * 100.0
+            candidates_map[key]["score"] += t_score
+
+    # User history players (frequently and recently entered by user)
+    history = datastore.get_user_history(user_id)
+    history_players = history.get("players", [])
+    now_ts = time.time()
+
+    for idx, hp in enumerate(history_players):
+        pid = hp.get("player_id") or hp.get("id")
+        pname = f"{hp.get('surname', '')} {hp.get('name', '')}".strip()
         if (pid and pid in roster_pids) or (pname.lower() in roster_names):
             continue
-        if any(c.get("pid") == pid and c.get("pname") == pname for c in candidates):
-            continue
-        candidates.append({
-            "pid": pid,
-            "name": p.get("name", ""),
-            "surname": p.get("surname", ""),
-            "patronymic": p.get("patronymic", ""),
-            "town": p.get("town", ""),
-            "pname": pname,
-        })
+        key = f"pid_{pid}" if pid else f"name_{pname.lower()}"
+        if key not in candidates_map:
+            candidates_map[key] = {
+                "pid": pid,
+                "name": hp.get("name", ""),
+                "surname": hp.get("surname", ""),
+                "patronymic": hp.get("patronymic", ""),
+                "town": hp.get("town", ""),
+                "pname": pname,
+                "score": 0.0,
+            }
+        h_score = 0.0
+        use_count = hp.get("count", 1)
+        h_score += use_count * 40.0
+        h_score += max(0.0, 100.0 - idx * 5.0)
+
+        last_used_str = hp.get("last_used")
+        if last_used_str:
+            try:
+                import datetime
+                lu_dt = datetime.datetime.fromisoformat(last_used_str)
+                age_days = (now_ts - lu_dt.timestamp()) / 86400.0
+                if age_days <= 1.0:
+                    h_score += 150.0
+                elif age_days <= 7.0:
+                    h_score += 100.0
+                elif age_days <= 30.0:
+                    h_score += 50.0
+                elif age_days <= 365.0:
+                    h_score += 20.0
+            except Exception:
+                pass
+
+        candidates_map[key]["score"] += h_score
+
+    candidates = list(candidates_map.values())
+    candidates.sort(key=lambda c: c["score"], reverse=True)
 
     if candidates:
         page_size = 6
@@ -326,6 +379,9 @@ def render_roster_ui(chat_id, user_id, context_data, message_id=None):
     keyboard.append([
         {"text": "✏️ Сменить название", "callback_data": "roster:rename_team"},
         {"text": "🏙 Изменить город", "callback_data": "roster:edit_town"}
+    ])
+    keyboard.append([
+        {"text": "🔄 Сменить базовую команду", "callback_data": "roster:change_base_team"}
     ])
     keyboard.append([
         {"text": "✅ Сохранить состав", "callback_data": "roster:save"}
@@ -388,10 +444,16 @@ def handle_callback_query(cq):
                         context_data["display_name"] = t.get("display_name", t.get("team_name", ""))
                         context_data["rating_team_id"] = t.get("rating_team_id")
                         context_data["roster"] = list(t.get("roster", []))
+                        if t.get("town"):
+                            context_data["town"] = t.get("town")
                         break
 
-            render_team_selection_ui(chat_id, user_id, context_data, message_id)
-            datastore.set_user_state(user_id, "SELECTING_TEAM", context_data)
+            if context_data.get("team_name"):
+                render_roster_ui(chat_id, user_id, context_data, message_id)
+                datastore.set_user_state(user_id, "MANAGING_ROSTER", context_data)
+            else:
+                render_team_selection_ui(chat_id, user_id, context_data, message_id)
+                datastore.set_user_state(user_id, "SELECTING_TEAM", context_data)
 
     elif action in ("team_hist", "team_select"):
         team_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() and int(parts[2]) > 0 else None
@@ -407,8 +469,24 @@ def handle_callback_query(cq):
         context_data["display_name"] = team_name
         if town:
             context_data["town"] = town
+
+        roster = context_data.get("roster", [])
+        if roster:
+            new_roster = []
+            for p in roster:
+                pid = p.get("player_id")
+                new_st = helpers.determine_player_default_status(team_id, pid, new_roster)
+                p_copy = dict(p)
+                p_copy["status"] = new_st
+                new_roster.append(p_copy)
+            context_data["roster"] = new_roster
+
         datastore.set_user_state(user_id, "MANAGING_ROSTER", context_data)
         render_roster_ui(chat_id, user_id, context_data, message_id)
+
+    elif action == "change_base_team":
+        render_team_selection_ui(chat_id, user_id, context_data, message_id)
+        datastore.set_user_state(user_id, "SELECTING_TEAM", context_data)
 
     elif action == "edit_town":
         msg_text = (
@@ -473,7 +551,8 @@ def handle_callback_query(cq):
 
         roster = context_data.get("roster", [])
         if not any((pid and p.get("player_id") == pid) or (surname and p.get("surname", "").lower() == surname.lower() and p.get("name", "").lower() == name.lower()) for p in roster):
-            status = "K" if len(roster) == 0 else "B"
+            rating_team_id = context_data.get("rating_team_id")
+            status = helpers.determine_player_default_status(rating_team_id, pid, roster)
             roster.append({
                 "player_id": pid,
                 "name": name,
@@ -533,7 +612,8 @@ def handle_callback_query(cq):
         name = parts[0] if parts else unrated_name
         surname = parts[1] if len(parts) > 1 else ""
         roster = context_data.get("roster", [])
-        status = "K" if len(roster) == 0 else "B"
+        rating_team_id = context_data.get("rating_team_id")
+        status = helpers.determine_player_default_status(rating_team_id, None, roster)
         roster.append({
             "player_id": None,
             "name": name,
@@ -617,10 +697,40 @@ def handle_callback_query(cq):
             datastore.add_user_history_team(user_id, rating_team_id, team_name)
             for p in roster:
                 if p.get("name") or p.get("surname"):
-                    datastore.add_user_history_player(user_id, p.get("player_id"), p.get("name", ""), p.get("surname", ""))
+                    datastore.add_user_history_player(user_id, p.get("player_id"), p.get("name", ""), p.get("surname", ""), patronymic=p.get("patronymic", ""))
 
         datastore.clear_user_state(user_id)
-        telegram_api.edit_message_text(chat_id, message_id, f"✅ Состав команды <b>{display_name}</b> успешно сохранен!\n\nВы можете в любой момент изменить его, отправив /roster.", formatted=True)
+
+        team_info = f"Команда: <b>{display_name}</b>"
+        if rating_team_id:
+            team_info += f" (Рейтинг ID: {rating_team_id})"
+        elif display_name != team_name:
+            team_info += f" (изн: {team_name})"
+
+        town_info = f"Город: <b>{town}</b>" if town else "Город: <i>не указан</i>"
+
+        lines = [
+            f"✅ <b>Состав команды «{display_name}» успешно сохранен!</b>\n",
+            team_info,
+            town_info,
+            "",
+            "<b>Состав:</b>"
+        ]
+
+        status_symbols = {"K": "👑 [К]", "B": "🛡 [Б]", "L": "⚔️ [Л]"}
+        if not roster:
+            lines.append("<i>(состав пуст)</i>")
+        else:
+            for idx, p in enumerate(roster, 1):
+                st = status_symbols.get(p.get("status", "B"), "🛡 [Б]")
+                pid_str = f" (ID: {p['player_id']})" if p.get("player_id") else " (без ID)"
+                p_name = f"{p.get('name', '')} {p.get('surname', '')}".strip() or p.get("display_name", "Игрок")
+                lines.append(f"{idx}. {st} {p_name}{pid_str}")
+
+        lines.append("\nВы можете в любой момент изменить его, отправив /roster.")
+        saved_text = "\n".join(lines)
+
+        telegram_api.edit_message_text(chat_id, message_id, saved_text, formatted=True)
 
 
 def handle_export_roster(chat_id, thread_id=None):
@@ -683,7 +793,7 @@ def handle_private_message(body):
 
     state_name, context_data = datastore.get_user_state(user_id)
 
-    if ENABLE_TEST_COMMANDS and text.startswith("/testreg"):
+    if helpers.is_debug_allowed(user_id=user_id, chat_id=chat_id) and text.startswith("/testreg"):
         tourn_name = "Тестовый кубок сообщества"
         url = "https://rating.chgk.info/tournament/5000"
         representative_text = "Представитель: Тест Тестов"
@@ -765,7 +875,7 @@ def handle_private_message(body):
                     datastore.set_user_state(user_id, "SELECTING_TEAM", context_data)
             return True
 
-    if ENABLE_TEST_COMMANDS and text.startswith("/testroster"):
+    if helpers.is_debug_allowed(user_id=user_id, chat_id=chat_id) and text.startswith("/testroster"):
 
         sync_req_id = f"test_{int(time.time())}"
         group_chat_id = chat_id
@@ -1058,7 +1168,8 @@ def handle_private_message(body):
         name = parts[0] if parts else text
         surname = parts[1] if len(parts) > 1 else ""
         roster = context_data.get("roster", [])
-        status = "K" if len(roster) == 0 else "B"
+        rating_team_id = context_data.get("rating_team_id")
+        status = helpers.determine_player_default_status(rating_team_id, None, roster)
         roster.append({
             "player_id": None,
             "name": name,
@@ -1100,6 +1211,7 @@ def command_handler(body):
 
             inp = [s for s in body["message"]["text"].split() if not s.startswith("@")]
             chat_id = body["message"]["chat"]["id"]
+            user_id = body["message"]["from"]["id"] if "from" in body["message"] else None
             thread_id = None
             if (
                 "is_forum" in body["message"]["chat"]
@@ -1112,7 +1224,7 @@ def command_handler(body):
                     thread_id = body["message"].get("message_thread_id", None)
 
             # Check testreg command
-            if ENABLE_TEST_COMMANDS and inp[0] == "/testreg":
+            if helpers.is_debug_allowed(user_id=user_id, chat_id=chat_id) and inp[0] == "/testreg":
                 tourn_name = "Тестовый кубок сообщества"
                 url = "https://rating.chgk.info/tournament/5000"
                 representative_text = "Представитель: Тест Тестов"
@@ -1389,6 +1501,8 @@ def command_handler(body):
                 telegram_api.send_message(chat_id, thread_id, help_text, formatted=True)
                 return ""
             elif inp[0] == "/debug":
+                if not helpers.is_debug_allowed(user_id=user_id, chat_id=chat_id):
+                    return ""
                 if len(inp) > 1:
                     enabled = inp[1].lower() in ("1", "true", "вкл", "on", "enable")
                     debug.set_debug(enabled)

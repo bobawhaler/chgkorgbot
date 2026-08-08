@@ -11,6 +11,48 @@ import debug
 PROJECT_ID = os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
 TELEGRAM_API_TOKEN = os.environ.get("TELEGRAM_API_TOKEN")
 OBFUSCATION_TOKEN = os.environ.get("OBFUSCATION_TOKEN")
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("DEBUG_CHAT_ID")
+
+
+def is_debug_allowed(user_id=None, chat_id=None):
+    """
+    Checks whether debug/test functions are allowed for the given user_id and/or chat_id.
+    Allowed if user_id/chat_id matches ADMIN_CHAT_ID or DEBUG_CHAT_ID environment variable.
+    """
+    admin_id_env = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("DEBUG_CHAT_ID")
+    if not admin_id_env:
+        return False
+
+    allowed_ids = {s.strip() for s in re.split(r'[,\s]+', str(admin_id_env)) if s.strip()}
+
+    if user_id is not None and str(user_id) in allowed_ids:
+        return True
+    if chat_id is not None and str(chat_id) in allowed_ids:
+        return True
+
+    return False
+
+
+def determine_player_default_status(rating_team_id, pid, current_roster):
+    """
+    Determines default roster status ('K', 'B', or 'L') for a player added to the game roster:
+    - Base team players get 'K' (if no captain in roster yet) or 'B'.
+    - Players not in base roster (or unrated players) get 'L' (Legionnaire).
+    """
+    has_captain = any(p.get("status") == "K" for p in current_roster)
+
+    if rating_team_id and pid:
+        base_pids, captain_id = rating_api.get_team_base_players(rating_team_id)
+        if pid in base_pids:
+            if not has_captain and (pid == captain_id or not any(p.get("player_id") in base_pids for p in current_roster)):
+                return "K"
+            return "B" if has_captain else "K"
+
+    if rating_team_id:
+        return "L"
+
+    return "K" if not current_roster else "B"
+
 
 DEFAULT_TIMEZONE = "Europe/Berlin"
 DEFAULT_VENUE_ID = 3053

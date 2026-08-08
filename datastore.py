@@ -637,22 +637,29 @@ def add_user_history_player(user_id, player_id, name, surname, patronymic=""):
             teams = list(entity.get("teams", []))
             players = list(entity.get("players", []))
 
-        existing = False
-        for p in players:
+        now_str = datetime.datetime.now(pytz.utc).isoformat()
+        existing_p = None
+        for i, p in enumerate(players):
             if (player_id and p.get("player_id") == player_id) or (p.get("surname", "").lower() == surname.lower() and p.get("name", "").lower() == name.lower()):
-                p["player_id"] = player_id or p.get("player_id")
-                p["name"] = name
-                p["surname"] = surname
-                p["patronymic"] = patronymic
-                existing = True
+                existing_p = players.pop(i)
                 break
 
-        if not existing:
-            players.append({
+        if existing_p:
+            existing_p["player_id"] = player_id or existing_p.get("player_id")
+            existing_p["name"] = name or existing_p.get("name", "")
+            existing_p["surname"] = surname or existing_p.get("surname", "")
+            existing_p["patronymic"] = patronymic or existing_p.get("patronymic", "")
+            existing_p["count"] = existing_p.get("count", 1) + 1
+            existing_p["last_used"] = now_str
+            players.insert(0, existing_p)
+        else:
+            players.insert(0, {
                 "player_id": player_id,
                 "name": name,
                 "surname": surname,
                 "patronymic": patronymic,
+                "count": 1,
+                "last_used": now_str,
             })
 
         entity["teams"] = teams
