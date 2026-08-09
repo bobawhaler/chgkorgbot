@@ -314,8 +314,14 @@ def send_document(chat_id, file_content, filename, caption=None):
     
     response = requests.post(BASE_URL + "sendDocument", data=data, files=files)
     debug.log("telegram_api.send_document", t0, f"chat_id={chat_id}, filename={filename}")
-    if not response.ok:
-        print(f"Error sending document {response.status_code}, {response.reason}")
+    return response
+
+
+def delete_message(chat_id, message_id):
+    t0 = time.perf_counter()
+    params = {"chat_id": str(chat_id), "message_id": message_id}
+    response = requests.post(BASE_URL + "deleteMessage", json=params)
+    debug.log("telegram_api.delete_message", t0, f"chat_id={chat_id}, message_id={message_id}")
     return response
 
 

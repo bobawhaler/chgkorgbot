@@ -33,25 +33,43 @@ def is_debug_allowed(user_id=None, chat_id=None):
     return False
 
 
-def determine_player_default_status(rating_team_id, pid, current_roster):
+def determine_player_default_status(rating_team_id, pid, current_roster=None):
     """
     Determines default roster status ('K', 'B', or 'L') for a player added to the game roster:
-    - Base team players get 'K' (if no captain in roster yet) or 'B'.
-    - Players not in base roster (or unrated players) get 'L' (Legionnaire).
+    - If player is in base roster of rating_team_id on the rating site:
+        - Returns 'K' if player is designated as captain (captain_id).
+        - Returns 'B' if player is in base roster.
+    - Otherwise (not in base roster, unrated, or no rating_team_id): returns 'L' (Legionnaire).
     """
-    has_captain = any(p.get("status") == "K" for p in current_roster)
-
     if rating_team_id and pid:
         base_pids, captain_id = rating_api.get_team_base_players(rating_team_id)
         if pid in base_pids:
-            if not has_captain and (pid == captain_id or not any(p.get("player_id") in base_pids for p in current_roster)):
+            if captain_id and pid == captain_id:
                 return "K"
-            return "B" if has_captain else "K"
+            return "B"
+    return "L"
 
-    if rating_team_id:
-        return "L"
 
-    return "K" if not current_roster else "B"
+def format_player_button_text(p, prefix="👤"):
+    """
+    Formats player display text for Telegram inline keyboard buttons.
+    Shortens patronymic to an initial (e.g. 'Замятин Александр А.') so that full first name
+    and surname remain visible without being truncated by Telegram UI.
+    """
+    pid = p.get("id") or p.get("player_id") or p.get("pid")
+    surname = str(p.get("surname", "") or "").strip()
+    name = str(p.get("name", "") or "").strip()
+    patronymic = str(p.get("patronymic", "") or "").strip()
+
+    pat_str = f" {patronymic[0]}." if patronymic else ""
+    town = str(p.get("town", "") or "").strip()
+    town_str = f" ({town})" if town else ""
+    id_str = f"[ID {pid}] " if pid else ""
+
+    p_fio = f"{surname} {name}{pat_str}".strip()
+    if prefix:
+        return f"{prefix} {id_str}{p_fio}{town_str}".strip()
+    return f"{id_str}{p_fio}{town_str}".strip()
 
 
 DEFAULT_TIMEZONE = "Europe/Berlin"

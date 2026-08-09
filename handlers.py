@@ -10,6 +10,68 @@ import datastore
 import debug
 
 
+def build_help_text(chat_id, is_private=True):
+    chat_config = datastore.get_chat_config(chat_id) or {}
+    collect_teams = chat_config.get("collect_teams", True)
+
+    sections = ["📖 <b>Справка по командам бота</b>"]
+
+    if is_private:
+        sections.append(
+            "<b>Турниры и расписание:</b>\n"
+            "• <code>/tourns &lt;дата/время&gt;</code> — расписание ближайших турниров\n"
+            "• <code>/rtourns &lt;дата/время&gt;</code> — расписание рейтингуемых турниров\n"
+            "• <code>/poll &lt;1,2...&gt;</code> — опрос по выбранным турнирам\n"
+            "• <code>/feedback</code> — опрос впечатлений о сыгранном пакете"
+        )
+        if collect_teams:
+            sections.append(
+                "<b>Управление составами команд:</b>\n"
+                "• <code>/roster</code> (или <code>/myteams</code>) — меню управления составом вашей команды\n"
+                "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга\n"
+                "• <code>/setmyid &lt;id_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка вашего профиля на сайте рейтинга\n"
+                "• <code>/cancel</code> (или <code>/stop</code>, <code>отмена</code>) — выход из любого режима ввода текста"
+            )
+        sections.append(
+            "<b>Настройки:</b>\n"
+            "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок команд\n"
+            "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
+            "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата (напр. Europe/Moscow)\n"
+            "• <code>/setmindifficulty &lt;N&gt;</code> — мин. сложность турниров\n"
+            "• <code>/setmaxdifficulty &lt;N&gt;</code> — макс. сложность турниров"
+        )
+        sections.append(
+            "<b>Системные:</b>\n"
+            "• <code>/help</code> — эта справка"
+        )
+    else:
+        if collect_teams:
+            sections.append(
+                "<b>Регистрация команд:</b>\n"
+                "• <b>Reply с названием команды</b> на анонс турнира — зарегистрировать команду\n"
+                "• <code>/unregister</code> или <code>отмена</code> (как reply) — отменить регистрацию команды\n"
+                "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга"
+            )
+        sections.append(
+            "<b>Голосования и турниры:</b>\n"
+            "• <code>/tourns &lt;дата/время&gt;</code> — расписание турниров на дату\n"
+            "• <code>/rtourns &lt;дата/время&gt;</code> — расписание только рейтингуемых турниров\n"
+            "• <code>/poll &lt;1,2,...&gt; [title] [до время]</code> — опрос по выбранным турнирам\n"
+            "• <code>/stop</code> (reply на опрос) — подвести итоги и завершить опрос\n"
+            "• <code>/cancel</code> (reply on опрос) — отменить опрос\n"
+            "• <code>/feedback</code> — опрос впечатлений о сыгранном пакете"
+        )
+        sections.append(
+            "<b>Настройки чата:</b>\n"
+            "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок от команд\n"
+            "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
+            "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата\n"
+            "• <code>/setmindifficulty &lt;N&gt;</code> / <code>/setmaxdifficulty &lt;N&gt;</code> — фильтр сложности"
+        )
+
+    return "\n\n".join(sections)
+
+
 def system_tic_handler():
     t0 = time.perf_counter()
     # telegram_api.set_webhook()
@@ -353,7 +415,9 @@ def render_roster_ui(chat_id, user_id, context_data, message_id=None):
         keyboard.append([{"text": header_text, "callback_data": "roster:noop"}])
         
         for c in page_candidates:
-            c_fio = f"{c['surname']} {c['name']} {c.get('patronymic', '')}".strip()
+            c_fio = f"{c['surname']} {c['name']}".strip()
+            if c.get('patronymic'):
+                c_fio += f" {c['patronymic'][0]}."
             c_town = f" ({c['town']})" if c.get("town") else ""
             if c.get("is_self"):
                 c_label = f"➕ Добавить себя ([ID {c['pid']}] {c_fio}{c_town})"
@@ -600,7 +664,7 @@ def handle_callback_query(cq):
         msg_text = (
             "✍️ <b>ОЖИДАЕТСЯ ВВОД ТЕКСТА</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "Пришлите Имя и Фамилию нового игрока (без ID):\n"
+            "Пришлите Имя и Фамилию игрока (без ID):\n"
             "<i>(или нажмите кнопку ниже для отмены)</i>"
         )
         keyboard = [[{"text": "📋 Вернуться к составу", "callback_data": "roster:back_to_roster"}]]
@@ -1093,10 +1157,9 @@ def handle_private_message(body):
                     return True
                 keyboard = []
                 for p in found[:6]:
-                    pfio = f"{p.get('surname', '')} {p.get('name', '')} {p.get('patronymic', '')}".strip()
-                    ptown = f" ({p['town']})" if p.get("town") else ""
+                    btn_text = helpers.format_player_button_text(p, prefix="👤")
                     cb = f"roster:link_myid:{p['id']}"
-                    keyboard.append([{"text": f"👤 [ID {p['id']}] {pfio}{ptown}", "callback_data": cb}])
+                    keyboard.append([{"text": btn_text, "callback_data": cb}])
                 telegram_api.send_message(chat_id, None, f"Выберите ваш профиль из результатов поиска по запросу \"{arg}\":", formatted=True, reply_markup={"inline_keyboard": keyboard})
                 return True
 
@@ -1131,27 +1194,7 @@ def handle_private_message(body):
         return True
 
     if text == "/help":
-        help_text = (
-            "📖 <b>Справка по командам бота (Личный чат)</b>\n\n"
-            "<b>Турниры и расписание:</b>\n"
-            "• <code>/tourns &lt;дата/время&gt;</code> — расписание ближайших турниров\n"
-            "• <code>/rtourns &lt;дата/время&gt;</code> — расписание рейтингуемых турниров\n"
-            "• <code>/poll &lt;1,2...&gt;</code> — опрос по выбранным турнирам\n"
-            "• <code>/feedback</code> — опрос впечатлений о сыгранном пакете\n\n"
-            "<b>Управление составами команд:</b>\n"
-            "• <code>/roster</code> (или <code>/myteams</code>) — меню управления составом вашей команды\n"
-            "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга\n"
-            "• <code>/setmyid &lt;id_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка вашего профиля на сайте рейтинга\n"
-            "• <code>/cancel</code> (или <code>/stop</code>, <code>отмена</code>) — выход из любого режима ввода текста\n\n"
-            "<b>Настройки:</b>\n"
-            "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок команд\n"
-            "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
-            "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата (напр. Europe/Moscow)\n"
-            "• <code>/setmindifficulty &lt;N&gt;</code> — мин. сложность турниров\n"
-            "• <code>/setmaxdifficulty &lt;N&gt;</code> — макс. сложность турниров\n\n"
-            "<b>Системные:</b>\n"
-            "• <code>/help</code> — эта справка"
-        )
+        help_text = build_help_text(chat_id, is_private=True)
         telegram_api.send_message(chat_id, None, help_text, formatted=True)
         return True
 
@@ -1189,16 +1232,27 @@ def handle_private_message(body):
                 return True
             keyboard = []
             for p in found[:6]:
-                pfio = f"{p.get('surname', '')} {p.get('name', '')} {p.get('patronymic', '')}".strip()
-                ptown = f" ({p['town']})" if p.get("town") else ""
+                btn_text = helpers.format_player_button_text(p, prefix="👤")
                 cb = f"roster:link_myid:{p['id']}"
-                keyboard.append([{"text": f"👤 [ID {p['id']}] {pfio}{ptown}", "callback_data": cb}])
+                keyboard.append([{"text": btn_text, "callback_data": cb}])
             telegram_api.send_message(chat_id, None, f"Выберите ваш профиль из результатов поиска по запросу \"{arg}\":", formatted=True, reply_markup={"inline_keyboard": keyboard})
             return True
 
     if state_name == "ENTERING_SEARCH_TEAM":
+        telegram_api.send_chat_action(chat_id, "typing")
+        status_resp = telegram_api.send_message(
+            chat_id, None, f"🔍 <i>Ищу команды по запросу «{text}» на сайте рейтинга...</i>", formatted=True
+        )
+        status_msg_id = None
+        if status_resp and hasattr(status_resp, "json"):
+            status_msg_id = status_resp.json().get("result", {}).get("message_id")
+
         context_data["searched_team_name"] = text
         teams_found = rating_api.search_teams(text)
+
+        if status_msg_id:
+            telegram_api.delete_message(chat_id, status_msg_id)
+
         if not teams_found:
             context_data["team_name"] = text
             context_data["display_name"] = text
@@ -1214,7 +1268,7 @@ def handle_private_message(body):
                 cb = f"roster:team_select:{t['id']}"
                 keyboard.append([{"text": f"🏆 {tname} [ID {t['id']}]", "callback_data": cb}])
             cb_new = "roster:team_select:0"
-            keyboard.append([{"text": f"➕ Новая команда \"{text[:15]}\"", "callback_data": cb_new}])
+            keyboard.append([{"text": f"➕ Новая «{text[:12]}» (без ID)", "callback_data": cb_new}])
             telegram_api.send_message(chat_id, None, f"Результаты поиска команд по запросу \"{text}\":", formatted=True, reply_markup={"inline_keyboard": keyboard})
         return
 
@@ -1243,13 +1297,24 @@ def handle_private_message(body):
 
     if state_name == "ENTERING_SEARCH_PLAYER":
         telegram_api.send_chat_action(chat_id, "typing")
+        status_resp = telegram_api.send_message(
+            chat_id, None, f"🔍 <i>Ищу игроков по запросу «{text}» на сайте рейтинга...</i>", formatted=True
+        )
+        status_msg_id = None
+        if status_resp and hasattr(status_resp, "json"):
+            status_msg_id = status_resp.json().get("result", {}).get("message_id")
+
         players_found = rating_api.search_players(text)
+
+        if status_msg_id:
+            telegram_api.delete_message(chat_id, status_msg_id)
+
         context_data["unrated_name_fallback"] = text
         datastore.set_user_state(user_id, "ENTERING_SEARCH_PLAYER", context_data)
 
         if not players_found:
             keyboard = [
-                [{"text": f"➕ Добавить \"{text[:20]}\" (без ID)", "callback_data": "roster:add_unrated_search"}],
+                [{"text": f"➕ Добавить «{text[:12]}» (без ID)", "callback_data": "roster:add_unrated_search"}],
                 [{"text": "📋 Вернуться к составу", "callback_data": "roster:back_to_roster"}]
             ]
             telegram_api.send_message(
@@ -1262,12 +1327,11 @@ def handle_private_message(body):
             return
         keyboard = []
         for p in players_found[:10]:
-            pfio = f"{p.get('surname', '')} {p.get('name', '')} {p.get('patronymic', '')}".strip()
-            ptown = f" ({p['town']})" if p.get("town") else ""
+            btn_text = helpers.format_player_button_text(p, prefix="👤")
             pid = p["id"]
             cb = f"roster:add_hint:{pid}"
-            keyboard.append([{"text": f"👤 [ID {pid}] {pfio}{ptown}", "callback_data": cb}])
-        keyboard.append([{"text": f"➕ Добавить \"{text[:20]}\" (без ID)", "callback_data": "roster:add_unrated_search"}])
+            keyboard.append([{"text": btn_text, "callback_data": cb}])
+        keyboard.append([{"text": f"➕ Добавить «{text[:12]}» (без ID)", "callback_data": "roster:add_unrated_search"}])
         telegram_api.send_message(chat_id, None, f"Результаты поиска игроков по запросу \"{text}\":", formatted=True, reply_markup={"inline_keyboard": keyboard})
         return
 
@@ -1567,48 +1631,7 @@ def command_handler(body):
                 handle_export_roster(chat_id, thread_id)
                 return ""
             elif cmd == "/help":
-                if chat_id > 0:
-                    help_text = (
-                        "📖 <b>Справка по командам бота (Личный чат)</b>\n\n"
-                        "<b>Турниры и расписание:</b>\n"
-                        "• <code>/tourns &lt;дата/время&gt;</code> — расписание ближайших турниров\n"
-                        "• <code>/rtourns &lt;дата/время&gt;</code> — расписание рейтингуемых турниров\n"
-                        "• <code>/poll &lt;1,2...&gt;</code> — опрос по выбранным турнирам\n"
-                        "• <code>/feedback</code> — опрос впечатлений о сыгранном пакете\n\n"
-                        "<b>Управление составами команд:</b>\n"
-                        "• <code>/roster</code> (или <code>/myteams</code>) — меню управления составом вашей команды\n"
-                        "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга\n"
-                        "• <code>/setmyid &lt;id_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка вашего профиля на сайте рейтинга\n"
-                        "• <code>/cancel</code> (или <code>/stop</code>, <code>отмена</code>) — выход из любого режима ввода текста\n\n"
-                        "<b>Настройки:</b>\n"
-                        "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок команд\n"
-                        "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
-                        "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата (напр. Europe/Moscow)\n"
-                        "• <code>/setmindifficulty &lt;N&gt;</code> — мин. сложность турниров\n"
-                        "• <code>/setmaxdifficulty &lt;N&gt;</code> — макс. сложность турниров\n\n"
-                        "<b>Системные:</b>\n"
-                        "• <code>/help</code> — эта справка"
-                    )
-                else:
-                    help_text = (
-                        "📖 <b>Справка по командам бота (Групповой чат)</b>\n\n"
-                        "<b>Регистрация команд:</b>\n"
-                        "• <b>Reply с названием команды</b> на анонс турнира — зарегистрировать команду\n"
-                        "• <code>/unregister</code> или <code>отмена</code> (как reply) — отменить регистрацию команды\n"
-                        "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга\n\n"
-                        "<b>Голосования и турниры:</b>\n"
-                        "• <code>/tourns &lt;дата/время&gt;</code> — расписание турниров на дату\n"
-                        "• <code>/rtourns &lt;дата/время&gt;</code> — расписание только рейтингуемых турниров\n"
-                        "• <code>/poll &lt;1,2,...&gt; [title] [до время]</code> — опрос по выбранным турнирам\n"
-                        "• <code>/stop</code> (reply на опрос) — подвести итоги и завершить опрос\n"
-                        "• <code>/cancel</code> (reply на опрос) — отменить опрос\n"
-                        "• <code>/feedback</code> — опрос впечатлений о сыгранном пакете\n\n"
-                        "<b>Настройки чата:</b>\n"
-                        "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок от команд\n"
-                        "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
-                        "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата\n"
-                        "• <code>/setmindifficulty &lt;N&gt;</code> / <code>/setmaxdifficulty &lt;N&gt;</code> — фильтр сложности"
-                    )
+                help_text = build_help_text(chat_id, is_private=(chat_id > 0))
                 telegram_api.send_message(chat_id, thread_id, help_text, formatted=True)
                 return ""
             elif inp[0] == "/debug":
