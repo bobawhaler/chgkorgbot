@@ -16,14 +16,27 @@ def build_help_text(chat_id, is_private=True):
 
     sections = ["📖 <b>Справка по командам бота</b>"]
 
+    tourn_help = (
+        "<b>Поиск турниров:</b>\n"
+        "• <code>/tourns [дата/время]</code> — поиск всех доступных турниров\n"
+        "• <code>/rtourns [дата/время]</code> — поиск только рейтингуемых турниров\n"
+        "  <i>Формат даты:</i> текстом (<code>завтра</code>, <code>в субботу</code>, <code>в пятницу 19:00</code>) или датой (<code>15.08</code>, <code>2026-08-15</code>). Без параметров — на сегодня.\n"
+        "  <i>Примеры:</i> <code>/tourns завтра в 18:00</code>, <code>/rtourns 15.08</code>\n\n"
+        "<b>Создание опросов:</b>\n"
+        "• <code>/poll &lt;номера&gt; [название] [до дата/время]</code> — опрос по выбранным турнирам\n"
+        "  <i>Параметры:</i>\n"
+        "  - <code>номера</code>: через запятую (напр. <code>1,3,5</code>) из списка /tourns или /rtourns\n"
+        "  - <code>[название]</code>: тема опроса (по умолчанию \"Выбираем\")\n"
+        "  - <code>[до дата/время]</code>: время автозавершения после слова <b>до</b> (напр. <code>до пятницы 20:00</code>)\n"
+        "  <i>Пример:</i> <code>/poll 1,3,5 Играем в эти выходные до пятницы 20:00</code>\n\n"
+        "<b>Управление опросами:</b>\n"
+        "• <code>/stop</code> (reply на опрос) — подвести итоги и завершить опрос\n"
+        "• <code>/cancel</code> (reply на опрос) — отменить опрос без итогов\n"
+        "• <code>/feedback</code> — опрос впечатлений о сыгранном пакете"
+    )
+
     if is_private:
-        sections.append(
-            "<b>Турниры и расписание:</b>\n"
-            "• <code>/tourns &lt;дата/время&gt;</code> — расписание ближайших турниров\n"
-            "• <code>/rtourns &lt;дата/время&gt;</code> — расписание рейтингуемых турниров\n"
-            "• <code>/poll &lt;1,2...&gt;</code> — опрос по выбранным турнирам\n"
-            "• <code>/feedback</code> — опрос впечатлений о сыгранном пакете"
-        )
+        sections.append(tourn_help)
         if collect_teams:
             sections.append(
                 "<b>Управление составами команд:</b>\n"
@@ -52,15 +65,7 @@ def build_help_text(chat_id, is_private=True):
                 "• <code>/unregister</code> или <code>отмена</code> (как reply) — отменить регистрацию команды\n"
                 "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга"
             )
-        sections.append(
-            "<b>Голосования и турниры:</b>\n"
-            "• <code>/tourns &lt;дата/время&gt;</code> — расписание турниров на дату\n"
-            "• <code>/rtourns &lt;дата/время&gt;</code> — расписание только рейтингуемых турниров\n"
-            "• <code>/poll &lt;1,2,...&gt; [title] [до время]</code> — опрос по выбранным турнирам\n"
-            "• <code>/stop</code> (reply на опрос) — подвести итоги и завершить опрос\n"
-            "• <code>/cancel</code> (reply on опрос) — отменить опрос\n"
-            "• <code>/feedback</code> — опрос впечатлений о сыгранном пакете"
-        )
+        sections.append(tourn_help)
         sections.append(
             "<b>Настройки чата:</b>\n"
             "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок от команд\n"
@@ -70,6 +75,7 @@ def build_help_text(chat_id, is_private=True):
         )
 
     return "\n\n".join(sections)
+
 
 
 def system_tic_handler():

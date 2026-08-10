@@ -3,4 +3,7 @@
 .gitignore
 __pycache__/
 Pipenv
+Pipfile
+venv/
+.venv/
 docs.json

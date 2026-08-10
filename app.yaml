@@ -1,7 +1,9 @@
 runtime: python311
 
+entrypoint: gunicorn -b :$PORT --workers 2 --threads 8 main:app
+
 automatic_scaling:
-  max_instances: 20
+  max_instances: 5
 
 includes:
 - env.yaml
