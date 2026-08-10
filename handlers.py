@@ -187,6 +187,9 @@ def system_tic_handler():
         for t in teams:
             if not t.get("roster_submitted") and not t.get("roster"):
                 rem_count = t.get("reminders_count", 0)
+                if rem_count >= 10:
+                    # Maximum 10 automated reminders reached; representative can send manual reminders if needed.
+                    continue
                 last_rem = t.get("last_reminder_ts", 0)
 
                 should_remind = False
