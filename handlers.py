@@ -11,8 +11,8 @@ import debug
 
 
 def build_help_text(chat_id, is_private=True):
-    chat_config = datastore.get_chat_config(chat_id) or {}
-    collect_teams = chat_config.get("collect_teams", True)
+    register_teams = helpers.get_chat_register_teams(chat_id)
+    collect_rosters = helpers.get_chat_collect_rosters(chat_id)
 
     sections = ["📖 <b>Справка по командам бота</b>"]
 
@@ -37,17 +37,18 @@ def build_help_text(chat_id, is_private=True):
 
     if is_private:
         sections.append(tourn_help)
-        if collect_teams:
-            sections.append(
-                "<b>Управление составами команд:</b>\n"
-                "• <code>/roster</code> (или <code>/myteams</code>) — меню управления составом вашей команды\n"
-                "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга\n"
-                "• <code>/setmyid &lt;id_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка вашего профиля на сайте рейтинга\n"
-                "• <code>/cancel</code> (или <code>/stop</code>, <code>отмена</code>) — выход из любого режима ввода текста"
-            )
+        roster_help_lines = []
+        if collect_rosters:
+            roster_help_lines.append("• <code>/roster</code> (или <code>/myteams</code>) — меню управления составом вашей команды")
+        roster_help_lines.append("• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга")
+        if collect_rosters:
+            roster_help_lines.append("• <code>/setmyid &lt;id_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка вашего профиля на сайте рейтинга")
+            roster_help_lines.append("• <code>/cancel</code> (или <code>/stop</code>, <code>отмена</code>) — выход из любого режима ввода текста")
+        sections.append("<b>Управление составами команд:</b>\n" + "\n".join(roster_help_lines))
         sections.append(
             "<b>Настройки:</b>\n"
-            "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок команд\n"
+            "• <code>/setregisterteams &lt;on|off&gt;</code> — включение/выключение регистрации команд на турнир\n"
+            "• <code>/setcollectrosters &lt;on|off&gt;</code> — включение/выключение сбора и ввода составов\n"
             "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
             "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата (напр. Europe/Moscow)\n"
             "• <code>/setmindifficulty &lt;N&gt;</code> — мин. сложность турниров\n"
@@ -58,17 +59,23 @@ def build_help_text(chat_id, is_private=True):
             "• <code>/help</code> — эта справка"
         )
     else:
-        if collect_teams:
+        if register_teams:
             sections.append(
                 "<b>Регистрация команд:</b>\n"
                 "• <b>Reply с названием команды</b> на анонс турнира — зарегистрировать команду\n"
                 "• <code>/unregister</code> или <code>отмена</code> (как reply) — отменить регистрацию команды\n"
                 "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга"
             )
+        else:
+            sections.append(
+                "<b>Составы команд:</b>\n"
+                "• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга"
+            )
         sections.append(tourn_help)
         sections.append(
             "<b>Настройки чата:</b>\n"
-            "• <code>/setcollectteams &lt;on|off&gt;</code> — включение/выключение сбора заявок от команд\n"
+            "• <code>/setregisterteams &lt;on|off&gt;</code> — включение/выключение регистрации команд на турнир\n"
+            "• <code>/setcollectrosters &lt;on|off&gt;</code> — включение/выключение сбора и ввода составов\n"
             "• <code>/setvenues &lt;id1,id2...&gt;</code> — настройка мониторинга площадок\n"
             "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата\n"
             "• <code>/setmindifficulty &lt;N&gt;</code> / <code>/setmaxdifficulty &lt;N&gt;</code> — фильтр сложности"
@@ -147,9 +154,12 @@ def system_tic_handler():
                 start_time_ts = int(sync_req["dateStart"].timestamp())
                 
                 thread_id = chat_config.get("thread_id", None)
-                if chat_config.get("collect_teams"):
+                register_teams = helpers.get_chat_register_teams(chat_id)
+                collect_rosters = helpers.get_chat_collect_rosters(chat_id)
+
+                if register_teams:
                     msg_text = helpers.format_team_registration_text(
-                        tourn_name, url, representative_text, narrator_text, start_time, []
+                        tourn_name, url, representative_text, narrator_text, start_time, [], include_roster_prompt=collect_rosters
                     )
                     resp = telegram_api.send_message(
                         int(chat_id),
@@ -183,6 +193,9 @@ def system_tic_handler():
     now_ts = int(time.time())
     active_regs = datastore.get_all_active_registrations()
     for reg in active_regs:
+        reg_chat_id = reg.get("chat_id")
+        if not helpers.get_chat_collect_rosters(reg_chat_id):
+            continue
         start_ts = helpers.get_registration_start_ts(reg)
         if start_ts and now_ts < start_ts:
             # Tournament has not started yet! Do not send any reminders before start_ts.
@@ -880,7 +893,10 @@ def handle_callback_query(cq):
 def handle_export_roster(chat_id, thread_id=None):
     now_ts = int(time.time())
     if chat_id > 0:
-        raw_regs = datastore.get_user_representative_registrations(chat_id)
+        if helpers.is_debug_allowed(user_id=chat_id, chat_id=chat_id):
+            raw_regs = datastore.get_all_active_registrations()
+        else:
+            raw_regs = datastore.get_user_representative_registrations(chat_id)
     else:
         raw_regs = datastore.get_all_active_registrations(chat_id)
 
@@ -904,13 +920,15 @@ def handle_export_roster(chat_id, thread_id=None):
 
     if not valid_regs:
         if chat_id > 0:
-            telegram_api.send_message(chat_id, thread_id, "Вам пока не доступны активные заявки команд на ближайшие турниры.\n\nИспользуйте /setmyid <ваш ID на сайте рейтинга> для привязки вашего аккаунта представителя.", formatted=True)
+            telegram_api.send_message(chat_id, thread_id, "Вам пока не доступны активные заявки команд на ближайшие турниры.\n\nИспользуйте <code>/setmyid &lt;ваш ID на сайте рейтинга&gt;</code> для привязки вашего аккаунта представителя.", formatted=True)
         else:
             telegram_api.send_message(chat_id, thread_id, "В данном чате пока нет активных открытых заявок на ближайшие турниры.", formatted=True)
         return
 
     for reg in valid_regs:
         sync_req_id = reg.get("sync_req_id")
+        reg_chat_id = reg.get("chat_id")
+        collect_rosters = helpers.get_chat_collect_rosters(reg_chat_id)
         tourn_name = reg.get("tourn_name", "Турнир")
         teams = reg.get("teams", [])
         
@@ -942,23 +960,25 @@ def handle_export_roster(chat_id, thread_id=None):
 
         keyboard = []
         if teams:
-            for t in teams:
-                t_disp = t.get("display_name") or t.get("team_name", "Команда")
-                uid = t.get("user_id")
-                r_list = t.get("roster", [])
-                is_sub = t.get("roster_submitted") or len(r_list) > 0
-                if uid:
-                    if is_sub:
-                        cb = f"roster:reject_team:{sync_req_id}:{uid}:{reg.get('chat_id')}"
-                        keyboard.append([{"text": f"↩️ Вернуть на доработку: {t_disp}", "callback_data": cb}])
-                    else:
-                        cb = f"roster:remind_team:{sync_req_id}:{uid}:{reg.get('chat_id')}"
-                        keyboard.append([{"text": f"🔔 Напомнить в ЛС: {t_disp}", "callback_data": cb}])
+            if collect_rosters:
+                for t in teams:
+                    t_disp = t.get("display_name") or t.get("team_name", "Команда")
+                    uid = t.get("user_id")
+                    r_list = t.get("roster", [])
+                    is_sub = t.get("roster_submitted") or len(r_list) > 0
+                    if uid:
+                        if is_sub:
+                            cb = f"roster:reject_team:{sync_req_id}:{uid}:{reg_chat_id}"
+                            keyboard.append([{"text": f"↩️ Вернуть на доработку: {t_disp}", "callback_data": cb}])
+                        else:
+                            cb = f"roster:remind_team:{sync_req_id}:{uid}:{reg_chat_id}"
+                            keyboard.append([{"text": f"🔔 Напомнить в ЛС: {t_disp}", "callback_data": cb}])
 
-            cb_csv = f"roster:export_csv:{sync_req_id}:{reg.get('chat_id')}"
-            cb_remind = f"roster:remind_unsubmitted:{sync_req_id}:{reg.get('chat_id')}"
+            cb_csv = f"roster:export_csv:{sync_req_id}:{reg_chat_id}"
             keyboard.append([{"text": "📥 Скачать CSV для сайта рейтинга", "callback_data": cb_csv}])
-            keyboard.append([{"text": "🔔 Напомнить всем не сдавшим", "callback_data": cb_remind}])
+            if collect_rosters:
+                cb_remind = f"roster:remind_unsubmitted:{sync_req_id}:{reg_chat_id}"
+                keyboard.append([{"text": "🔔 Напомнить всем не сдавшим", "callback_data": cb_remind}])
 
         telegram_api.send_message(chat_id, thread_id, "\n".join(lines), formatted=True, reply_markup={"inline_keyboard": keyboard})
 
@@ -1014,6 +1034,7 @@ def handle_private_message(body):
                 if updated_entity:
                     teams = updated_entity.get("teams", [])
                     url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                    collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                     new_text = helpers.format_team_registration_text(
                         reg.get("tourn_name", ""),
                         url,
@@ -1021,6 +1042,7 @@ def handle_private_message(body):
                         reg.get("narrator_text", ""),
                         reg.get("start_time", ""),
                         teams,
+                        include_roster_prompt=collect_rosters,
                     )
                     telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
             elif not raw_text.startswith("/"):
@@ -1029,6 +1051,7 @@ def handle_private_message(body):
                 if updated_entity:
                     teams = updated_entity.get("teams", [])
                     url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                    collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                     new_text = helpers.format_team_registration_text(
                         reg.get("tourn_name", ""),
                         url,
@@ -1036,21 +1059,23 @@ def handle_private_message(body):
                         reg.get("narrator_text", ""),
                         reg.get("start_time", ""),
                         teams,
+                        include_roster_prompt=collect_rosters,
                     )
                     telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
                     telegram_api.set_message_reaction(chat_id, msg["message_id"], "❤️")
 
-                    context_data = {
-                        "sync_req_id": reg["sync_req_id"],
-                        "chat_id": chat_id,
-                        "tourn_name": reg.get("tourn_name", ""),
-                        "team_name": team_name,
-                        "display_name": team_name,
-                        "rating_team_id": None,
-                        "roster": [],
-                    }
-                    render_team_selection_ui(chat_id, user_id, context_data)
-                    datastore.set_user_state(user_id, "SELECTING_TEAM", context_data)
+                    if collect_rosters:
+                        context_data = {
+                            "sync_req_id": reg["sync_req_id"],
+                            "chat_id": chat_id,
+                            "tourn_name": reg.get("tourn_name", ""),
+                            "team_name": team_name,
+                            "display_name": team_name,
+                            "rating_team_id": None,
+                            "roster": [],
+                        }
+                        render_team_selection_ui(chat_id, user_id, context_data)
+                        datastore.set_user_state(user_id, "SELECTING_TEAM", context_data)
             return True
 
     if helpers.is_debug_allowed(user_id=user_id, chat_id=chat_id) and text.startswith("/testroster"):
@@ -1103,8 +1128,9 @@ def handle_private_message(body):
                 return True
 
         active_regs = datastore.get_user_active_registrations(user_id)
+        active_regs = [r for r in active_regs if helpers.get_chat_collect_rosters(r.get("chat_id"))]
         if not active_regs:
-            telegram_api.send_message(chat_id, None, "Привет! У вас пока нет активных поданных заявок от команд.\n\nЗарегистрируйте команду в групповом чате.", formatted=True)
+            telegram_api.send_message(chat_id, None, "Привет! У вас пока нет активных поданных заявок от команд с включенным сбором составов.\n\nЗарегистрируйте команду в групповом чате.", formatted=True)
             return True
 
         keyboard = []
@@ -1185,8 +1211,9 @@ def handle_private_message(body):
 
     if text in ("/myteams", "/roster"):
         active_regs = datastore.get_user_active_registrations(user_id)
+        active_regs = [r for r in active_regs if helpers.get_chat_collect_rosters(r.get("chat_id"))]
         if not active_regs:
-            telegram_api.send_message(chat_id, None, "У вас пока нет активных зарегистрированных команд.", formatted=True)
+            telegram_api.send_message(chat_id, None, "У вас пока нет активных зарегистрированных команд с включенным сбором составов.", formatted=True)
             return True
         keyboard = []
         for reg_info in active_regs:
@@ -1451,6 +1478,7 @@ def command_handler(body):
                         if updated_entity:
                             teams = updated_entity.get("teams", [])
                             url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                            collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                             new_text = helpers.format_team_registration_text(
                                 reg.get("tourn_name", ""),
                                 url,
@@ -1458,6 +1486,7 @@ def command_handler(body):
                                 reg.get("narrator_text", ""),
                                 reg.get("start_time", ""),
                                 teams,
+                                include_roster_prompt=collect_rosters,
                             )
                             telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
                     elif not raw_text.startswith("/"):
@@ -1466,6 +1495,7 @@ def command_handler(body):
                         if updated_entity:
                             teams = updated_entity.get("teams", [])
                             url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                            collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                             new_text = helpers.format_team_registration_text(
                                 reg.get("tourn_name", ""),
                                 url,
@@ -1473,24 +1503,26 @@ def command_handler(body):
                                 reg.get("narrator_text", ""),
                                 reg.get("start_time", ""),
                                 teams,
+                                include_roster_prompt=collect_rosters,
                             )
                             telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
                             telegram_api.set_message_reaction(chat_id, body["message"]["message_id"], "❤️")
                             
-                            pm_resp = telegram_api.send_message(
-                                user_id,
-                                None,
-                                f'Привет! Ваша команда "{team_name}" зарегистрирована на турнир "{reg.get("tourn_name")}". Отправьте /roster или /start, чтобы указать состав.',
-                                formatted=True,
-                            )
-                            if not pm_resp or not pm_resp.ok:
-                                user_mention = f"@{username}" if username else user_disp
-                                telegram_api.send_message(
-                                    chat_id,
-                                    thread_id,
-                                    f'{user_mention}, ваша команда "{team_name}" зарегистрирована! Напишите мне в ЛС, чтобы указать состав.',
-                                    reply_to_message_id=body["message"]["message_id"],
+                            if collect_rosters:
+                                pm_resp = telegram_api.send_message(
+                                    user_id,
+                                    None,
+                                    f'Привет! Ваша команда "{team_name}" зарегистрирована на турнир "{reg.get("tourn_name")}". Отправьте /roster или /start, чтобы указать состав.',
+                                    formatted=True,
                                 )
+                                if not pm_resp or not pm_resp.ok:
+                                    user_mention = f"@{username}" if username else user_disp
+                                    telegram_api.send_message(
+                                        chat_id,
+                                        thread_id,
+                                        f'{user_mention}, ваша команда "{team_name}" зарегистрирована! Напишите мне в ЛС, чтобы указать состав.',
+                                        reply_to_message_id=body["message"]["message_id"],
+                                    )
                     return ""
 
             cmd = inp[0].split("@")[0].lower()
@@ -1627,14 +1659,23 @@ def command_handler(body):
                 datastore.update_chat_config(chat_id, thread_id, min_difficulty=float(inp[1]))
             elif cmd == "/setmaxdifficulty" and len(inp) > 1:
                 datastore.update_chat_config(chat_id, thread_id, max_difficulty=float(inp[1]))
-            elif cmd == "/setcollectteams" and len(inp) > 1:
+            elif cmd == "/setregisterteams" and len(inp) > 1:
                 enabled = inp[1].lower() in ("1", "true", "вкл", "on", "enable", "да")
-                datastore.update_chat_config(chat_id, thread_id, collect_teams=enabled)
+                datastore.update_chat_config(chat_id, thread_id, register_teams=enabled)
+                status_str = "включена" if enabled else "выключена"
+                telegram_api.send_message(
+                    chat_id,
+                    thread_id,
+                    f"Регистрация команд: {status_str}",
+                )
+            elif cmd in ("/setcollectrosters", "/setrosters") and len(inp) > 1:
+                enabled = inp[1].lower() in ("1", "true", "вкл", "on", "enable", "да")
+                datastore.update_chat_config(chat_id, thread_id, collect_rosters=enabled)
                 status_str = "включен" if enabled else "выключен"
                 telegram_api.send_message(
                     chat_id,
                     thread_id,
-                    f"Сбор заявок команд: {status_str}",
+                    f"Ввод составов: {status_str}",
                 )
             elif cmd in ("/rosters", "/exportroster", "/csv"):
                 handle_export_roster(chat_id, thread_id)

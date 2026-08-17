@@ -282,21 +282,36 @@ def get_chat_venues(chat_id):
         return chat_config["venues"]
     return []
 
+def get_chat_register_teams(chat_id):
+    chat_config = datastore.get_chat_config(chat_id)
+    if chat_config and "register_teams" in chat_config:
+        return bool(chat_config["register_teams"])
+    return False
+
+def get_chat_collect_rosters(chat_id):
+    chat_config = datastore.get_chat_config(chat_id)
+    if chat_config and "collect_rosters" in chat_config:
+        return bool(chat_config["collect_rosters"])
+    return False
+
 def get_default_poll_closing_time():
     return datetime.datetime.now() + relativedelta(months=1)
 
 
-def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams):
+def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams, include_roster_prompt=True):
     lines = [
         f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
         "",
         "📝 <b>Регистрация команд открыта!</b>",
         "<i>Ответьте (reply) на это сообщение названием вашей команды для регистрации.</i>",
         "<i>Для отмены ответьте <code>/unregister</code> или <code>отмена</code>.</i>",
-        "<i>Для сдачи состава перейдите в ЛС с ботом и нажмите <b>Старт</b>.</i>",
+    ]
+    if include_roster_prompt:
+        lines.append("<i>Для сдачи состава перейдите в ЛС с ботом и нажмите <b>Старт</b>.</i>")
+    lines.extend([
         "",
         f"<b>Зарегистрированные команды ({len(teams)}):</b>",
-    ]
+    ])
     if not teams:
         lines.append("(пока нет поданных заявок)")
     else:

@@ -63,7 +63,7 @@ def send_message(
     )
     debug.log("telegram_api.send_message", t0, f"chat_id={chat_id}")
     if not response.ok:
-        print(f"Error sending message {response.status_code}, {response.reason} for chat_id={chat_id}")
+        print(f"Error sending message {response.status_code}, {response.reason} for chat_id={chat_id}: {response.text}")
     return response
 
 
