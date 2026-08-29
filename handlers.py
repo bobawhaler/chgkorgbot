@@ -1,6 +1,8 @@
 import traceback
 import json
 import time
+import re
+import datetime
 import pytz
 
 import rating_api
@@ -44,6 +46,8 @@ def build_help_text(chat_id, is_private=True):
         if collect_rosters:
             roster_help_lines.append("• <code>/setmyid &lt;id_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка вашего профиля на сайте рейтинга")
             roster_help_lines.append("• <code>/cancel</code> (или <code>/stop</code>, <code>отмена</code>) — выход из любого режима ввода текста")
+        if helpers.is_debug_allowed(user_id=chat_id, chat_id=chat_id):
+            roster_help_lines.append("• <code>/miniapp</code> (или <code>/app</code>) — запуск Mini App управления составами (только для админа)")
         sections.append("<b>Управление составами команд:</b>\n" + "\n".join(roster_help_lines))
         sections.append(
             "<b>Настройки:</b>\n"
@@ -80,6 +84,12 @@ def build_help_text(chat_id, is_private=True):
             "• <code>/settimezone &lt;tz&gt;</code> — часовой пояс чата\n"
             "• <code>/setmindifficulty &lt;N&gt;</code> / <code>/setmaxdifficulty &lt;N&gt;</code> — фильтр сложности"
         )
+        if helpers.is_admin_user(chat_id):
+            sections.append(
+                "<b>Администрирование (только для админа):</b>\n"
+                "• <code>/del</code> (reply) — удалить сообщение\n"
+                "• <code>/react</code> (reply) — поставить реакцию ❤️"
+            )
 
     return "\n\n".join(sections)
 
@@ -171,6 +181,14 @@ def system_tic_handler():
                         res_data = resp.json().get("result", {})
                         message_id = res_data.get("message_id")
                         if message_id:
+                            rep_user_id = None
+                            if representative_text:
+                                rep_id_match = re.search(r'\b(\d{4,7})\b', representative_text)
+                                if rep_id_match:
+                                    rep_mapping = datastore.find_user_by_rating_id(int(rep_id_match.group(1)))
+                                    if rep_mapping:
+                                        rep_user_id = rep_mapping.get("telegram_user_id")
+
                             datastore.add_team_registration(
                                 int(chat_id),
                                 thread_id,
@@ -181,6 +199,7 @@ def system_tic_handler():
                                 narrator_text,
                                 start_time,
                                 start_time_ts=start_time_ts,
+                                created_by_user_id=rep_user_id,
                             )
                 else:
                     telegram_api.send_formatted_message(
@@ -188,6 +207,9 @@ def system_tic_handler():
                         thread_id,
                         f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
                     )
+
+    # Clean up and delete old registrations past their deadline (older than 14 days)
+    datastore.cleanup_old_registrations(days=14)
 
     # Check automated roster reminders
     now_ts = int(time.time())
@@ -239,6 +261,7 @@ def system_tic_handler():
             datastore.update_team_registration(reg)
 
     datastore.cleanup_old_cached_tournaments()
+    datastore.cleanup_old_chat_commands()
     debug.log("system_tic_handler", t0)
 
 
@@ -256,6 +279,7 @@ def render_team_selection_ui(chat_id, user_id, context_data, message_id=None):
     ]
 
     keyboard = []
+    keyboard.append([{"text": "📱 Открыть в Mini App", "web_app": {"url": helpers.get_webapp_url()}}])
     for t in history_teams[:5]:
         tid = t.get("team_id") or 0
         tname = t.get("name", "Команда")
@@ -1016,6 +1040,7 @@ def handle_private_message(body):
                     representative_text,
                     narrator_text,
                     start_time,
+                    created_by_user_id=user_id,
                 )
         return True
 
@@ -1098,49 +1123,30 @@ def handle_private_message(body):
         return True
 
     if text.startswith("/start"):
+        telegram_api.set_chat_menu_button(chat_id=chat_id, text="Составы")
         parts = text.split()
         if len(parts) > 1 and parts[1].startswith("roster_"):
             params = parts[1].split("_")
             if len(params) >= 3:
                 sync_req_id = params[1]
                 group_chat_id = int(params[2])
-                context_data = {
-                    "sync_req_id": sync_req_id,
-                    "chat_id": group_chat_id,
-                    "roster": [],
-                    "team_name": "",
-                    "display_name": "",
-                    "rating_team_id": None,
-                }
                 reg = datastore.get_team_registration(group_chat_id, sync_req_id)
-                if reg:
-                    context_data["tourn_name"] = reg.get("tourn_name", "")
-                    for t in reg.get("teams", []):
-                        if t.get("user_id") == user_id:
-                            context_data["team_name"] = t.get("team_name", "")
-                            context_data["display_name"] = t.get("display_name", t.get("team_name", ""))
-                            context_data["rating_team_id"] = t.get("rating_team_id")
-                            context_data["roster"] = list(t.get("roster", []))
-                            break
-
-                render_team_selection_ui(chat_id, user_id, context_data)
-                datastore.set_user_state(user_id, "SELECTING_TEAM", context_data)
+                tourn_name = reg.get("tourn_name", "Турнир") if reg else ""
+                tourn_str = f" на турнир <b>«{tourn_name}»</b>" if tourn_name else ""
+                telegram_api.send_message(
+                    chat_id,
+                    None,
+                    f"Для ввода и редактирования состава команды{tourn_str} откройте приложение по кнопке <b>«Составы»</b> внизу экрана рядом со строкой ввода.",
+                    formatted=True,
+                )
                 return True
 
-        active_regs = datastore.get_user_active_registrations(user_id)
-        active_regs = [r for r in active_regs if helpers.get_chat_collect_rosters(r.get("chat_id"))]
-        if not active_regs:
-            telegram_api.send_message(chat_id, None, "Привет! У вас пока нет активных поданных заявок от команд с включенным сбором составов.\n\nЗарегистрируйте команду в групповом чате.", formatted=True)
-            return True
-
-        keyboard = []
-        for reg_info in active_regs:
-            t_name = reg_info["team"].get("display_name") or reg_info["team"].get("team_name")
-            tourn_name = reg_info.get("tourn_name")
-            cb = f"roster:sel_reg:{reg_info['sync_req_id']}:{reg_info['chat_id']}"
-            keyboard.append([{"text": f"🏆 {tourn_name} — {t_name}", "callback_data": cb}])
-
-        telegram_api.send_message(chat_id, None, "Выберите команду для указания/редактирования состава:", formatted=True, reply_markup={"inline_keyboard": keyboard})
+        telegram_api.send_message(
+            chat_id,
+            None,
+            "Привет! Для ввода и управления составами ваших команд нажмите кнопку <b>«Составы»</b> в левом нижнем углу рядом со строкой ввода.",
+            formatted=True,
+        )
         return True
 
     state_name, context_data = datastore.get_user_state(user_id)
@@ -1209,19 +1215,14 @@ def handle_private_message(body):
             telegram_api.send_message(chat_id, None, "У вас пока не привязан профиль сайта рейтинга.\n\nОтправьте <code>/setmyid <ваш ID рейтинга или ФИО></code> для привязки.", formatted=True, reply_markup={"inline_keyboard": keyboard})
         return True
 
-    if text in ("/myteams", "/roster"):
-        active_regs = datastore.get_user_active_registrations(user_id)
-        active_regs = [r for r in active_regs if helpers.get_chat_collect_rosters(r.get("chat_id"))]
-        if not active_regs:
-            telegram_api.send_message(chat_id, None, "У вас пока нет активных зарегистрированных команд с включенным сбором составов.", formatted=True)
-            return True
-        keyboard = []
-        for reg_info in active_regs:
-            t_name = reg_info["team"].get("display_name") or reg_info["team"].get("team_name")
-            tourn_name = reg_info.get("tourn_name")
-            cb = f"roster:sel_reg:{reg_info['sync_req_id']}:{reg_info['chat_id']}"
-            keyboard.append([{"text": f"🏆 {tourn_name} — {t_name}", "callback_data": cb}])
-        telegram_api.send_message(chat_id, None, "Выберите заявку команды для настройки состава:", formatted=True, reply_markup={"inline_keyboard": keyboard})
+    if text in ("/myteams", "/roster", "/miniapp", "/app"):
+        telegram_api.set_chat_menu_button(chat_id=chat_id, text="Составы")
+        telegram_api.send_message(
+            chat_id,
+            None,
+            "Для ввода и управления составами ваших команд откройте приложение по кнопке <b>«Составы»</b> в левом нижнем углу рядом со строкой ввода.",
+            formatted=True,
+        )
         return True
 
     cmd_pm = text.split()[0].split("@")[0].lower() if text else ""
@@ -1411,15 +1412,61 @@ def command_handler(body):
             print(body["poll_answer"])
 
         if body and "message" in body and "text" in body["message"]:
-            chat_type = body["message"]["chat"].get("type", "group")
+            msg = body["message"]
+            msg_text = msg.get("text", "").strip()
+            chat = msg.get("chat", {})
+            from_user = msg.get("from", {})
+            chat_id = chat.get("id")
+            chat_type = chat.get("type", "group")
+            chat_title = chat.get("title", "") or chat.get("username", "")
+            user_id = from_user.get("id")
+            username = from_user.get("username", "")
+            first_name = from_user.get("first_name", "")
+            last_name = from_user.get("last_name", "")
+            msg_id = msg.get("message_id")
+            msg_thread_id = msg.get("message_thread_id")
+
+            if msg_text.startswith("/"):
+                raw_parts = [s for s in msg_text.split() if not s.startswith("@")]
+                cmd_name = raw_parts[0].split("@")[0].lower() if raw_parts else ""
+                llm_date_str = None
+
+                try:
+                    if cmd_name in ("/tourns", "/rtourns"):
+                        date_input = " ".join(raw_parts[1:]) if len(raw_parts) > 1 else "сегодня"
+                        tz = helpers.get_chat_timezone(chat_id)
+                        gem_dt, with_t = helpers.parse_date_gemini(date_input, tz)
+                        if gem_dt:
+                            llm_date_str = helpers._format_date_res(gem_dt, with_t)
+                    elif cmd_name == "/poll" and len(raw_parts) > 2:
+                        date_input = " ".join(raw_parts[2:])
+                        tz = helpers.get_chat_timezone(chat_id)
+                        gem_dt, with_t = helpers.parse_date_gemini(date_input, tz)
+                        if gem_dt:
+                            llm_date_str = helpers._format_date_res(gem_dt, with_t)
+                except Exception as e:
+                    print(f"Error extracting LLM date for command logging: {e}")
+
+                datastore.save_chat_command(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    text=msg_text,
+                    chat_type=chat_type,
+                    chat_title=chat_title,
+                    username=username,
+                    first_name=first_name,
+                    last_name=last_name,
+                    message_id=msg_id,
+                    thread_id=msg_thread_id,
+                    llm_date=llm_date_str,
+                )
+
             if chat_type == "private":
                 handled = handle_private_message(body)
                 if handled:
                     return ""
 
-            inp = [s for s in body["message"]["text"].split() if not s.startswith("@")]
-            chat_id = body["message"]["chat"]["id"]
-            user_id = body["message"]["from"]["id"] if "from" in body["message"] else None
+            inp = [s for s in msg_text.split() if not s.startswith("@")]
             thread_id = None
             if (
                 "is_forum" in body["message"]["chat"]
@@ -1457,7 +1504,24 @@ def command_handler(body):
                             representative_text,
                             narrator_text,
                             start_time,
+                            created_by_user_id=user_id,
                         )
+                return ""
+
+            # Check del command (admin only)
+            if helpers.is_admin_user(user_id) and inp[0] == "/del":
+                if "reply_to_message" in body["message"]:
+                    target_mid = body["message"]["reply_to_message"]["message_id"]
+                    telegram_api.delete_message(chat_id, target_mid)
+                telegram_api.delete_message(chat_id, body["message"]["message_id"])
+                return ""
+
+            # Check react command (admin only)
+            if helpers.is_admin_user(user_id) and inp[0] == "/react":
+                if "reply_to_message" in body["message"]:
+                    target_mid = body["message"]["reply_to_message"]["message_id"]
+                    telegram_api.set_message_reaction(chat_id, target_mid, "❤️")
+                telegram_api.delete_message(chat_id, body["message"]["message_id"])
                 return ""
 
             # Check if this message is a reply to a team registration announcement
@@ -1509,20 +1573,15 @@ def command_handler(body):
                             telegram_api.set_message_reaction(chat_id, body["message"]["message_id"], "❤️")
                             
                             if collect_rosters:
-                                pm_resp = telegram_api.send_message(
-                                    user_id,
-                                    None,
-                                    f'Привет! Ваша команда "{team_name}" зарегистрирована на турнир "{reg.get("tourn_name")}". Отправьте /roster или /start, чтобы указать состав.',
+                                bot_username = helpers.get_bot_username()
+                                link = f"https://t.me/{bot_username}?start=roster_{reg.get('sync_req_id')}_{chat_id}"
+                                telegram_api.send_message(
+                                    chat_id,
+                                    thread_id,
+                                    f'Как только будет известен состав — его можно указать <a href="{link}">по ссылке</a> в ЛС с ботом.',
                                     formatted=True,
+                                    reply_to_message_id=body["message"]["message_id"],
                                 )
-                                if not pm_resp or not pm_resp.ok:
-                                    user_mention = f"@{username}" if username else user_disp
-                                    telegram_api.send_message(
-                                        chat_id,
-                                        thread_id,
-                                        f'{user_mention}, ваша команда "{team_name}" зарегистрирована! Напишите мне в ЛС, чтобы указать состав.',
-                                        reply_to_message_id=body["message"]["message_id"],
-                                    )
                     return ""
 
             cmd = inp[0].split("@")[0].lower()
@@ -1655,6 +1714,10 @@ def command_handler(body):
                 datastore.update_chat_config(chat_id, thread_id, timezone=inp[1])
             elif cmd == "/setvenues" and len(inp) > 1:
                 datastore.update_chat_config(chat_id, thread_id, venues=inp[1])
+                chat_cfg = datastore.get_chat_config(chat_id)
+                if chat_cfg and "venues" in chat_cfg:
+                    for vid in chat_cfg["venues"]:
+                        helpers.trigger_venue_sync(vid)
             elif cmd == "/setmindifficulty" and len(inp) > 1:
                 datastore.update_chat_config(chat_id, thread_id, min_difficulty=float(inp[1]))
             elif cmd == "/setmaxdifficulty" and len(inp) > 1:
@@ -1677,12 +1740,70 @@ def command_handler(body):
                     thread_id,
                     f"Ввод составов: {status_str}",
                 )
+                if enabled:
+                    chat_cfg = datastore.get_chat_config(chat_id)
+                    if chat_cfg and "venues" in chat_cfg:
+                        for vid in chat_cfg["venues"]:
+                            helpers.trigger_venue_sync(vid)
             elif cmd in ("/rosters", "/exportroster", "/csv"):
                 handle_export_roster(chat_id, thread_id)
                 return ""
             elif cmd == "/help":
                 help_text = build_help_text(chat_id, is_private=(chat_id > 0))
                 telegram_api.send_message(chat_id, thread_id, help_text, formatted=True)
+                return ""
+            elif inp[0] in ("/role", "/setrole", "/testrole"):
+                if not helpers.is_debug_allowed(user_id=user_id, chat_id=chat_id):
+                    return ""
+                if len(inp) > 1:
+                    raw_role = inp[1].lower().strip()
+                    role_map = {
+                        "admin": "admin",
+                        "админ": "admin",
+                        "rep": "rep",
+                        "representative": "rep",
+                        "орг": "rep",
+                        "представитель": "rep",
+                        "player": "player",
+                        "игрок": "player",
+                        "captain": "player",
+                        "капитан": "player",
+                        "guest": "guest",
+                        "гость": "guest",
+                        "new": "guest",
+                        "auto": "auto",
+                        "reset": "auto",
+                        "сброс": "auto",
+                        "авто": "auto",
+                    }
+                    target_role = role_map.get(raw_role, raw_role)
+                    datastore.set_user_test_role(user_id, target_role)
+                    role_labels = {
+                        "admin": "👑 Администратор (все турниры и все команды)",
+                        "rep": "🏛 Представитель площадки (все команды турниров площадки)",
+                        "player": "🧑‍✈️ Капитан / Игрок (только своя команда)",
+                        "guest": "👤 Гость / Новый пользователь (пустой экран без регистраций)",
+                        "auto": "🔄 Автоматически (реальная роль)",
+                    }
+                    label = role_labels.get(target_role, target_role)
+                    telegram_api.send_message(
+                        chat_id,
+                        thread_id,
+                        f"🎭 <b>Режим тестирования роли изменен:</b>\n{label}\n\n<i>Откройте или обновите Mini App для проверки.</i>",
+                        formatted=True,
+                    )
+                else:
+                    cur = datastore.get_user_test_role(user_id) or "auto"
+                    msg = (
+                        f"🎭 <b>Текущий режим роли:</b> <code>{cur}</code>\n\n"
+                        f"<b>Доступные режимы:</b>\n"
+                        f"• <code>/role admin</code> — 👑 Администратор (видит абсолютно все)\n"
+                        f"• <code>/role rep</code> — 🏛 Представитель площадки (видит все команды турнира площадки)\n"
+                        f"• <code>/role player</code> — 🧑‍✈️ Капитан/Игрок (видит только свою команду)\n"
+                        f"• <code>/role guest</code> — 👤 Гость/Новичок (пустой список турниров)\n"
+                        f"• <code>/role auto</code> — 🔄 Сбросить режим к реальной роли"
+                    )
+                    telegram_api.send_message(chat_id, thread_id, msg, formatted=True)
                 return ""
             elif inp[0] == "/debug":
                 if not helpers.is_debug_allowed(user_id=user_id, chat_id=chat_id):

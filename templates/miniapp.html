@@ -1,0 +1,1982 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Управление составами — ЧГК Бот</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg-color: var(--tg-theme-bg-color, #f4f5f7);
+      --secondary-bg-color: var(--tg-theme-secondary-bg-color, #ffffff);
+      --text-color: var(--tg-theme-text-color, #1c1e21);
+      --hint-color: var(--tg-theme-hint-color, #8e8e93);
+      --link-color: var(--tg-theme-link-color, #2481cc);
+      --button-color: var(--tg-theme-button-color, #2481cc);
+      --button-text-color: var(--tg-theme-button-text-color, #ffffff);
+      --section-bg-color: var(--tg-theme-section-bg-color, #ffffff);
+      --danger-color: #e53935;
+      --success-color: #43a047;
+      --warning-color: #fb8c00;
+      --card-radius: 14px;
+      --item-radius: 10px;
+      --transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      padding-bottom: 95px;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--secondary-bg-color);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    }
+
+    .header-title {
+      font-size: 17px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header-user-btn {
+      background: rgba(36, 129, 204, 0.1);
+      color: var(--link-color);
+      border: none;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .container {
+      padding: 16px;
+      max-width: 640px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .card {
+      background: var(--section-bg-color);
+      border-radius: var(--card-radius);
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      border: 1px solid rgba(0, 0, 0, 0.04);
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--hint-color);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .screen {
+      display: none;
+      animation: fadeIn 0.25s ease forwards;
+    }
+
+    .screen.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .reg-item {
+      background: var(--section-bg-color);
+      border-radius: var(--card-radius);
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .reg-item:active {
+      transform: scale(0.985);
+    }
+
+    .reg-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+
+    .reg-tourn-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-color);
+      flex: 1;
+      margin-right: 8px;
+    }
+
+    .reg-team-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-color);
+      margin-bottom: 6px;
+    }
+
+    .reg-meta {
+      font-size: 13px;
+      color: var(--hint-color);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge-success {
+      background: rgba(67, 160, 71, 0.12);
+      color: var(--success-color);
+    }
+
+    .badge-danger {
+      background: rgba(229, 57, 53, 0.12);
+      color: var(--danger-color);
+    }
+
+    .badge-warning {
+      background: rgba(251, 140, 0, 0.12);
+      color: var(--warning-color);
+    }
+
+    .badge-primary {
+      background: rgba(36, 129, 204, 0.12);
+      color: var(--link-color);
+    }
+
+    .team-info-box {
+      background: rgba(0, 0, 0, 0.02);
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      border-radius: var(--item-radius);
+      padding: 12px;
+      margin-top: 10px;
+    }
+
+    .team-info-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    .team-info-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .roster-player {
+      background: var(--secondary-bg-color);
+      border-radius: var(--item-radius);
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      transition: var(--transition);
+    }
+
+    .player-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .player-num {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--hint-color);
+      width: 18px;
+      text-align: center;
+    }
+
+    .status-pill {
+      cursor: pointer;
+      padding: 5px 9px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      user-select: none;
+      transition: var(--transition);
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .status-pill:active {
+      transform: scale(0.92);
+    }
+
+    .status-K { background: #ffe082; color: #b78103; }
+    .status-B { background: #c8e6c9; color: #2e7d32; }
+    .status-L { background: #ffcdd2; color: #c62828; }
+
+    .player-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .player-name {
+      font-size: 15px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .player-sub {
+      font-size: 12px;
+      color: var(--hint-color);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .btn-remove {
+      background: none;
+      border: none;
+      color: var(--hint-color);
+      font-size: 18px;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn-remove:active {
+      color: var(--danger-color);
+      background: rgba(229, 57, 53, 0.1);
+      transform: scale(0.9);
+    }
+
+    .hints-section {
+      margin-top: 14px;
+    }
+
+    .hints-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .hint-item {
+      background: var(--secondary-bg-color);
+      border-radius: var(--item-radius);
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .hint-item:active {
+      transform: scale(0.985);
+      background: rgba(36, 129, 204, 0.08);
+    }
+
+    .hint-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .hint-name {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hint-sub {
+      font-size: 12px;
+      color: var(--hint-color);
+      margin-top: 2px;
+    }
+
+    .hint-add-btn {
+      background: var(--button-color);
+      color: var(--button-text-color);
+      border: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .search-box {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .search-input {
+      width: 100%;
+      background: var(--secondary-bg-color);
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 15px;
+      color: var(--text-color);
+      outline: none;
+      transition: var(--transition);
+    }
+
+    .search-input:focus {
+      border-color: var(--button-color);
+      box-shadow: 0 0 0 2px rgba(36, 129, 204, 0.18);
+    }
+
+    .btn {
+      background: var(--button-color);
+      color: var(--button-text-color);
+      border: none;
+      padding: 12px 18px;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: var(--transition);
+      text-decoration: none;
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+      opacity: 0.9;
+    }
+
+    .btn-secondary {
+      background: rgba(36, 129, 204, 0.12);
+      color: var(--link-color);
+    }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      color: var(--text-color);
+    }
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 13px;
+      border-radius: 8px;
+    }
+
+    .btn-block {
+      width: 100%;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 200;
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+      opacity: 1;
+    }
+
+    .modal-sheet {
+      background: var(--section-bg-color);
+      width: 100%;
+      max-width: 640px;
+      border-radius: 20px 20px 0 0;
+      padding: 20px 18px 35px 18px;
+      max-height: 88vh;
+      overflow-y: auto;
+      transform: translateY(100%);
+      transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+
+    .modal-overlay.active .modal-sheet {
+      transform: translateY(0);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .modal-title {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 22px;
+      cursor: pointer;
+      color: var(--hint-color);
+      padding: 4px;
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--hint-color);
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .form-input {
+      width: 100%;
+      background: var(--secondary-bg-color);
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 15px;
+      color: var(--text-color);
+      outline: none;
+    }
+
+    .form-input:focus {
+      border-color: var(--button-color);
+    }
+
+    .bottom-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--secondary-bg-color);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 12px 16px;
+      border-top: 1px solid rgba(0, 0, 0, 0.08);
+      display: flex;
+      gap: 10px;
+      z-index: 90;
+      justify-content: center;
+    }
+
+    .bottom-bar-inner {
+      width: 100%;
+      max-width: 640px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 35px 20px;
+      color: var(--hint-color);
+    }
+
+    .empty-icon {
+      font-size: 40px;
+      margin-bottom: 12px;
+    }
+
+    .empty-text {
+      font-size: 15px;
+      line-height: 1.4;
+    }
+
+    .toast {
+      position: fixed;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: rgba(30, 30, 30, 0.92);
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 300;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 22px;
+      height: 22px;
+      border: 3px solid rgba(0,0,0,0.1);
+      border-radius: 50%;
+      border-top-color: var(--button-color);
+      animation: spin 0.8s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .team-select-card {
+      background: var(--secondary-bg-color);
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: var(--item-radius);
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .team-select-card:active {
+      transform: scale(0.985);
+      background: rgba(36, 129, 204, 0.08);
+    }
+
+    .role-pill {
+      flex: 1;
+      padding: 6px 8px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 8px;
+      background: var(--secondary-bg-color);
+      color: var(--text-color);
+      cursor: pointer;
+      white-space: nowrap;
+      text-align: center;
+      transition: var(--transition);
+    }
+    .role-pill.active {
+      background: var(--button-color);
+      color: var(--button-text-color);
+      border-color: var(--button-color);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-title" id="headerTitle">
+      <span>&#127942;</span> <span>Составы команд</span>
+    </div>
+    <button class="header-user-btn" id="btnUserProfile" onclick="openProfileModal()">
+      <span>&#128100;</span> <span id="userProfileLabel">Мой профиль</span>
+    </button>
+  </header>
+
+  <div class="container">
+
+    <!-- Admin Role Switcher Bar (only shown if can_switch_roles is true) -->
+    <div id="adminRoleSwitcherBox" style="display: none; background: rgba(36, 129, 204, 0.08); border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; border: 1px dashed var(--link-color);">
+      <div style="font-size: 11px; font-weight: 700; color: var(--link-color); text-transform: uppercase; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+        <span>🎭 Тестирование ролей</span>
+        <span id="currentRoleBadge" style="font-weight: 600; font-size: 12px;"></span>
+      </div>
+      <div style="display: flex; gap: 6px; overflow-x: auto;">
+        <button class="role-pill" id="roleBtnAdmin" onclick="switchTestRole('admin')">👑 Админ</button>
+        <button class="role-pill" id="roleBtnRep" onclick="switchTestRole('rep')">🏛 Представитель</button>
+        <button class="role-pill" id="roleBtnPlayer" onclick="switchTestRole('player')">👥 Команда</button>
+        <button class="role-pill" id="roleBtnGuest" onclick="switchTestRole('guest')">👤 Гость</button>
+      </div>
+    </div>
+
+    <!-- Screen 1: Active Tournaments -->
+    <div class="screen active" id="screenTournaments">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h2 style="font-size: 18px; font-weight: 700;">Активные турниры</h2>
+        <button class="btn btn-secondary btn-sm" onclick="loadInitData(true)">&#128260; Обновить</button>
+      </div>
+
+      <div id="tournamentsList">
+        <div class="empty-state">
+          <div class="spinner"></div>
+          <div id="loadingStatusText" class="empty-text" style="margin-top: 12px;">Загрузка турниров...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Screen 2: Roster Management -->
+    <div class="screen" id="screenRoster">
+      
+      <!-- Tournament Header Card -->
+      <div class="card" style="margin-bottom: 12px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin-bottom: 4px;">
+          🏆 Турнир
+        </div>
+        <h2 style="font-size: 19px; font-weight: 700; margin-bottom: 0; line-height: 1.3;" id="currentTournName">
+          Название турнира
+        </h2>
+      </div>
+
+      <!-- State A: Base Team NOT Chosen -->
+      <div id="noBaseTeamBox" class="card" style="display: none; text-align: center; padding: 28px 16px;">
+        <div style="font-size: 44px; margin-bottom: 12px;">🛡</div>
+        <h3 style="font-size: 17px; font-weight: 700; margin-bottom: 8px;">Выберите базовую команду</h3>
+        <div style="font-size: 13px; color: var(--hint-color); margin-bottom: 22px; line-height: 1.4; max-width: 320px; margin-left: auto; margin-right: auto;">
+          Чтобы начать ввод состава и настроить разовое название для протокола, сначала привяжите базовую команду из рейтинга.
+        </div>
+        <button class="btn btn-block" style="padding: 12px 16px; font-size: 15px;" onclick="openBaseTeamModal()">
+          🔍 Выбрать базовую команду
+        </button>
+      </div>
+
+      <!-- State B: Base Team CHOSEN (Full Roster Management) -->
+      <div id="hasBaseTeamContent" style="display: none;">
+        
+        <!-- Team Details Card -->
+        <div class="card" style="margin-bottom: 14px; padding: 14px 16px;">
+          
+          <!-- Base Team Section -->
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 12px; border-bottom: 1px solid rgba(128, 128, 128, 0.15);">
+            <div style="flex: 1; min-width: 0; padding-right: 8px;">
+              <div style="font-size: 11px; font-weight: 600; color: var(--hint-color); text-transform: uppercase; letter-spacing: 0.5px;">
+                🛡 Базовая команда
+              </div>
+              <div style="font-size: 17px; font-weight: 700; margin-top: 3px; color: var(--text-color); word-break: break-word;" id="currentBaseTeamName">Не выбрана</div>
+              <div style="font-size: 12px; color: var(--hint-color); margin-top: 3px;">
+                <span id="currentTeamTown">Город: не указан</span> • <span id="currentBaseTeamIdBadge">Рейтинг ID: —</span>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" style="padding: 5px 12px; font-size: 13px; font-weight: 500; border-radius: 8px; flex-shrink: 0;" onclick="openBaseTeamModal()">
+              🔄 Сменить
+            </button>
+          </div>
+
+          <!-- One-off Display Name Section -->
+          <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 12px;">
+            <div style="flex: 1; min-width: 0; padding-right: 8px;">
+              <div style="font-size: 11px; font-weight: 600; color: var(--hint-color); text-transform: uppercase; letter-spacing: 0.5px;">
+                ✏️ Разовое название на игру
+              </div>
+              <div style="font-size: 15px; font-weight: 600; margin-top: 3px; color: var(--text-color); word-break: break-word;" id="currentTeamDisplayName">
+                Совпадает с базовым
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" style="padding: 5px 12px; font-size: 13px; font-weight: 500; border-radius: 8px; flex-shrink: 0;" onclick="openRenameModal()">
+              ✏️ Изменить
+            </button>
+          </div>
+
+        </div>
+
+        <!-- Current Roster Card -->
+        <div class="card">
+          <div style="margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div style="font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;">
+                👥 Текущий состав (<span id="rosterCount">0</span>)
+              </div>
+              <span id="rosterStatusLoading" style="display: none; align-items: center; gap: 4px; font-size: 11px; color: var(--button-color); font-weight: 600;">
+                <span class="spinner" style="width: 12px; height: 12px;"></span>
+                Пересчет статусов...
+              </span>
+            </div>
+            <div style="font-size: 11px; color: var(--hint-color); margin-top: 3px;">
+              клик по статусу для смены: 👑 [К] &rarr; 🛡 [Б] &rarr; ⚔️ [Л]
+            </div>
+          </div>
+
+          <div id="rosterList">
+            <div class="empty-state" style="padding: 20px;">
+              <div class="empty-icon">&#128101;</div>
+              <div class="empty-text">Состав пока пуст.<br>Добавьте игроков из подсказок ниже или через поиск.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Smart Suggestions Card -->
+        <div class="card hints-section">
+          <div class="card-title">
+            <span>💡 Подсказки игроков</span>
+            <span style="font-size: 11px; text-transform: none; color: var(--hint-color);">нажмите для добавления</span>
+          </div>
+          <div class="hints-grid" id="hintsList">
+            <div style="text-align: center; padding: 12px; color: var(--hint-color);"><div class="spinner"></div></div>
+          </div>
+        </div>
+
+        <!-- Search Rating Players Card -->
+        <div class="card">
+          <div class="card-title">&#128269; Поиск игрока в рейтинге</div>
+          <div class="search-box">
+            <input type="text" class="search-input" id="playerSearchInput" placeholder="Фамилия, Имя или ID..." oninput="onPlayerSearchInput(event)">
+          </div>
+
+          <div id="playerSearchResults"></div>
+
+          <button class="btn btn-outline btn-block btn-sm" style="margin-top: 10px;" onclick="openUnratedModal()">
+            &#10010; Добавить игрока без ID (вне базы рейтинга)
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Bottom Navigation Bar -->
+  <div class="bottom-bar" id="bottomBar" style="display: none;">
+    <div class="bottom-bar-inner">
+      <button class="btn btn-secondary" style="flex: 1;" onclick="navigateBack()">&#11013;&#65039; К турнирам</button>
+      <button class="btn btn-block" style="flex: 2;" id="btnSaveRoster" onclick="saveCurrentRoster()">
+        <span>&#128190; Сохранить состав</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Modal: Rename Display Name -->
+  <div class="modal-overlay" id="modalRename">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title">&#9999;&#65039; Разовое название команды</div>
+        <button class="modal-close" onclick="closeModal('modalRename')">&#10005;</button>
+      </div>
+      <div style="font-size: 13px; color: var(--hint-color); margin-bottom: 12px; line-height: 1.4;">
+        Базовая команда: <b id="renameModalBaseTeam" style="color: var(--text-color);">Не выбрана</b><br>
+        Выберите ранее использованное название или введите новое:
+      </div>
+
+      <!-- Suggested past display names -->
+      <div id="displayNamesSuggestionsList"></div>
+
+      <div class="form-group">
+        <label class="form-label">Ввести другое название</label>
+        <input type="text" class="form-input" id="inputRenameTeam" placeholder="Название команды на турнире">
+      </div>
+      <button class="btn btn-block" onclick="applyTeamRename()">Применить</button>
+    </div>
+  </div>
+
+  <!-- Modal: Base Team Selection (History / Search / New) -->
+  <div class="modal-overlay" id="modalBaseTeam">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title">&#128260; Выбор базовой команды</div>
+        <button class="modal-close" onclick="closeModal('modalBaseTeam')">&#10005;</button>
+      </div>
+      
+      <div style="font-size: 13px; color: var(--hint-color); margin-bottom: 14px;">
+        Выберите базовую команду из ранее заявлявшихся, найдите в рейтинге или создайте новую. Город привязывается к базовой команде автоматически.
+      </div>
+
+      <!-- Live Search in Rating -->
+      <div class="form-group">
+        <label class="form-label">&#128269; Поиск команды в рейтинге</label>
+        <input type="text" class="form-input" id="inputSearchTeam" placeholder="Название команды или ID..." oninput="onTeamSearchInput(event)">
+      </div>
+
+      <div id="teamSearchResults" style="margin-bottom: 14px;"></div>
+
+      <!-- History of Teams -->
+      <div class="form-label" style="margin-top: 10px;">Ранее заявлявшиеся команды:</div>
+      <div id="historyTeamsList" style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px;"></div>
+
+      <!-- New Team Form Trigger -->
+      <button class="btn btn-outline btn-block btn-sm" onclick="showNewTeamForm()">
+        &#10010; Заявить новую команду (без ID в рейтинге)
+      </button>
+
+      <!-- Inline New Team Form (hidden by default) -->
+      <div id="newTeamFormBox" style="display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(0,0,0,0.08);">
+        <div style="font-weight: 600; font-size: 14px; margin-bottom: 10px;">Создание новой команды:</div>
+        <div class="form-group">
+          <label class="form-label">Название команды</label>
+          <input type="text" class="form-input" id="inputNewTeamName" placeholder="Название команды">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Город команды</label>
+          <input type="text" class="form-input" id="inputNewTeamTown" placeholder="Например: Москва">
+        </div>
+        <button class="btn btn-block" onclick="applyNewTeam()">Выбрать эту команду</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Modal: Unrated Player (No ID) -->
+  <div class="modal-overlay" id="modalUnrated">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title">&#10010; Игрок без ID рейтинга</div>
+        <button class="modal-close" onclick="closeModal('modalUnrated')">&#10005;</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Фамилия</label>
+        <input type="text" class="form-input" id="inputUnratedSurname" placeholder="Иванов">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Имя</label>
+        <input type="text" class="form-input" id="inputUnratedName" placeholder="Иван">
+      </div>
+      <button class="btn btn-block" onclick="addUnratedPlayer()">Добавить в состав</button>
+    </div>
+  </div>
+
+  <!-- Modal: User Profile Link -->
+  <div class="modal-overlay" id="modalProfile">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title">&#128100; Мой профиль рейтинга</div>
+        <button class="modal-close" onclick="closeModal('modalProfile')">&#10005;</button>
+      </div>
+      <div id="profileCurrentInfo" style="margin-bottom: 14px; font-size: 14px; line-height: 1.4;"></div>
+      <div class="form-group">
+        <label class="form-label">Привязать профиль (ФИО или ID рейтинга)</label>
+        <input type="text" class="form-input" id="inputProfileSearch" placeholder="Вадим Карлинский или 13551" oninput="onProfileSearchInput(event)">
+      </div>
+      <div id="profileSearchResults"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">Сохранено</div>
+
+  <script>
+    window.onerror = function(msg, url, lineNo, columnNo, error) {
+      console.error("Global Error:", msg, error);
+      const el = document.getElementById("tournamentsList");
+      if (el) {
+        el.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">&#9888;&#65039;</div>
+            <div class="empty-text">Ошибка JavaScript:<br><b>${escapeHtml(msg)}</b> (строка ${lineNo})</div>
+            <button class="btn btn-secondary btn-sm" style="margin-top: 12px;" onclick="loadInitData(true)">Повторить</button>
+          </div>
+        `;
+      }
+    };
+
+    window.onunhandledrejection = function(event) {
+      console.error("Unhandled Rejection:", event.reason);
+      const el = document.getElementById("tournamentsList");
+      if (el) {
+        el.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">&#9888;&#65039;</div>
+            <div class="empty-text">Ошибка загрузки:<br><b>${escapeHtml(event.reason?.message || event.reason)}</b></div>
+            <button class="btn btn-secondary btn-sm" style="margin-top: 12px;" onclick="loadInitData(true)">Повторить</button>
+          </div>
+        `;
+      }
+    };
+
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      try {
+        tg.ready();
+        tg.expand();
+        if (tg.enableClosingConfirmation) tg.enableClosingConfirmation();
+      } catch (e) {
+        console.warn("Telegram WebApp init warning:", e);
+      }
+    }
+
+    let appData = {
+      user: null,
+      registrations: [],
+      historyTeams: [],
+      currentReg: null,
+      currentRoster: [],
+      currentTeamName: "",
+      currentDisplayName: "",
+      currentTown: "",
+      currentRatingTeamId: null,
+      candidates: []
+    };
+
+    let searchPlayerTimeout = null;
+    let searchTeamTimeout = null;
+    let searchProfileTimeout = null;
+
+    function initApp() {
+      setupTelegramBackButton();
+      loadInitData();
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initApp);
+    } else {
+      initApp();
+    }
+
+    function setupTelegramBackButton() {
+      if (tg && tg.BackButton) {
+        tg.BackButton.onClick(() => {
+          navigateBack();
+        });
+      }
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById("toast");
+      if (!toast) return;
+      toast.innerText = msg;
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 2500);
+    }
+
+    function haptic(type = "impact", style = "light") {
+      try {
+        if (tg && tg.HapticFeedback) {
+          if (type === "impact") tg.HapticFeedback.impactOccurred(style);
+          else if (type === "notification") tg.HapticFeedback.notificationOccurred(style);
+          else if (type === "selection") tg.HapticFeedback.selectionChanged();
+        }
+      } catch (e) {}
+    }
+
+    async function switchTestRole(role) {
+      haptic("impact", "medium");
+      appData.activeTestRole = role;
+      await loadInitData(true, role);
+    }
+
+    async function loadInitData(manual = false, overrideRole = null) {
+      const tournamentsListEl = document.getElementById("tournamentsList");
+      
+      const updateStatus = (text) => {
+        const el = document.getElementById("loadingStatusText");
+        if (el) el.innerText = text;
+      };
+
+      if (tournamentsListEl) {
+        tournamentsListEl.innerHTML = `
+          <div class="empty-state">
+            <div class="spinner"></div>
+            <div id="loadingStatusText" class="empty-text" style="margin-top: 12px; font-weight: 500;">Подключение к Telegram WebApp...</div>
+          </div>
+        `;
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      try {
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const uid = unsafeUser?.id || null;
+        const targetRole = overrideRole || appData.activeTestRole || "";
+
+        updateStatus(`Запрос данных с сервера (User ID: ${uid || "нет"})...`);
+
+        const resp = await fetch("/api/miniapp/init", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ 
+            initData: initDataRaw,
+            user_id: uid,
+            test_role: targetRole
+          })
+        });
+
+        updateStatus("Получен ответ. Чтение данных...");
+        
+        let data;
+        try {
+          data = await resp.json();
+        } catch (jsonErr) {
+          throw new Error("Не удалось прочитать ответ сервера (некорректный JSON). Статус: " + resp.status);
+        }
+
+        if (!resp.ok) {
+          throw new Error(data.error || ("Ошибка сервера (" + resp.status + " " + resp.statusText + ")"));
+        }
+
+        updateStatus("Обработка профиля и списка турниров...");
+
+        appData.user = data.user;
+        appData.registrations = data.registrations || [];
+        appData.historyTeams = data.history_teams || [];
+        appData.venueTeams = data.venue_teams || [];
+        appData.canSwitchRoles = data.can_switch_roles;
+        appData.activeTestRole = data.active_test_role || "admin";
+
+        // Render role switcher bar for admin
+        const switcherBox = document.getElementById("adminRoleSwitcherBox");
+        if (switcherBox) {
+          if (data.can_switch_roles) {
+            switcherBox.style.display = "block";
+            const roleLabels = {
+              "admin": "👑 Админ",
+              "rep": "🏛 Представитель",
+              "player": "👥 Команда",
+              "guest": "👤 Гость"
+            };
+            const roleBadge = document.getElementById("currentRoleBadge");
+            if (roleBadge) roleBadge.innerText = roleLabels[appData.activeTestRole] || appData.activeTestRole;
+
+            ["admin", "rep", "player", "guest"].forEach(r => {
+              const btn = document.getElementById(`roleBtn${r.charAt(0).toUpperCase() + r.slice(1)}`);
+              if (btn) {
+                if (r === appData.activeTestRole) {
+                  btn.classList.add("active");
+                } else {
+                  btn.classList.remove("active");
+                }
+              }
+            });
+          } else {
+            switcherBox.style.display = "none";
+          }
+        }
+        
+        const profileEl = document.getElementById("userProfileLabel");
+        if (profileEl) {
+          if (data.user_mapping) {
+            const m = data.user_mapping;
+            const fio = `${m.surname || ""} ${m.name || ""}`.trim();
+            profileEl.innerText = fio || `ID ${m.rating_player_id}`;
+          } else {
+            profileEl.innerText = "Привязать ID";
+          }
+        }
+
+        renderTournamentsList();
+        if (manual) showToast("Данные обновлены");
+      } catch (err) {
+        console.error("loadInitData error:", err);
+        const errorMsg = err.name === "AbortError" ? "Превышено время ожидания ответа сервера (таймаут 12 сек)" : err.message;
+        if (tournamentsListEl) {
+          tournamentsListEl.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">&#9888;&#65039;</div>
+              <div class="empty-text" style="color: var(--danger-color); font-weight: 600; margin-bottom: 8px;">Не удалось загрузить данные</div>
+              <div style="font-size: 13px; color: var(--hint-color); margin-bottom: 16px; word-break: break-word;">${escapeHtml(errorMsg)}</div>
+              <button class="btn btn-secondary btn-sm" onclick="loadInitData(true)">&#128260; Повторить попытку</button>
+            </div>
+          `;
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function renderTournamentsList() {
+      const container = document.getElementById("tournamentsList");
+      if (!container) return;
+      try {
+        if (!appData.registrations || appData.registrations.length === 0) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">&#127942;</div>
+              <div class="empty-text">Нет активных турниров с включенным сбором составов.<br>Зарегистрируйте команду в чате, где включен сбор составов.</div>
+            </div>
+          `;
+          return;
+        }
+
+        let html = "";
+        appData.registrations.forEach((reg, index) => {
+          const team = reg.team || {};
+          const teamName = team.display_name || team.team_name || "Команда";
+          const baseName = team.team_name || "";
+          const roster = team.roster || [];
+          const isSubmitted = team.roster_submitted || roster.length > 0;
+          const statusBadge = isSubmitted 
+            ? `<span class="badge badge-success">&#128994; Состав сдан (${roster.length} чел.)</span>`
+            : `<span class="badge badge-danger">&#128308; Состав НЕ сдан</span>`;
+
+          let metaHtml = "";
+          if (team.rating_team_id) {
+            metaHtml += `<span>🛡 Базовая: ${escapeHtml(baseName || teamName)} [ID ${team.rating_team_id}]</span>`;
+            if (team.town) {
+              metaHtml += `<span>• 🏙 ${escapeHtml(team.town)}</span>`;
+            }
+            if (team.display_name && team.display_name !== team.team_name) {
+              metaHtml += `<span>• ✏️ «${escapeHtml(team.display_name)}»</span>`;
+            }
+          }
+
+          html += `
+            <div class="reg-item" onclick="selectRegistration(${index})">
+              <div class="reg-header">
+                <div class="reg-tourn-name">🏆 ${escapeHtml(reg.tourn_name || "Турнир")}</div>
+                ${statusBadge}
+              </div>
+              <div class="reg-team-row">
+                <span>👥</span> <b>${escapeHtml(teamName)}</b>
+              </div>
+              ${metaHtml ? `<div class="reg-meta">${metaHtml}</div>` : ""}
+            </div>
+          `;
+        });
+
+        container.innerHTML = html;
+      } catch (renderErr) {
+        console.error("renderTournamentsList error:", renderErr);
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">&#9888;&#65039;</div>
+            <div class="empty-text" style="color: var(--danger-color);">Ошибка отображения списка турниров:<br><b>${escapeHtml(renderErr.message)}</b></div>
+            <button class="btn btn-secondary btn-sm" style="margin-top: 12px;" onclick="loadInitData(true)">&#128260; Повторить</button>
+          </div>
+        `;
+      }
+    }
+
+    async function selectRegistration(index) {
+      haptic("selection");
+      const reg = appData.registrations[index];
+      appData.currentReg = reg;
+      appData.currentChatId = reg.chat_id || "";
+      const team = reg.team || {};
+      
+      appData.currentTeamName = team.team_name || "Команда";
+      appData.currentDisplayName = team.display_name || appData.currentTeamName;
+      appData.currentTown = team.town || "";
+      appData.currentRatingTeamId = team.rating_team_id || null;
+      appData.currentRoster = JSON.parse(JSON.stringify(team.roster || []));
+
+      document.getElementById("screenTournaments").classList.remove("active");
+      document.getElementById("screenRoster").classList.add("active");
+      document.getElementById("bottomBar").style.display = "flex";
+      if (tg?.BackButton) tg.BackButton.show();
+
+      updateRosterScreenHeader();
+      renderRosterList();
+
+      if (!appData.currentTown && appData.currentRatingTeamId) {
+        fetch(`/api/miniapp/team_details?team_id=${appData.currentRatingTeamId}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.team && data.team.town) {
+              appData.currentTown = data.team.town;
+              updateRosterScreenHeader();
+            }
+          })
+          .catch(e => console.error("Error fetching initial team town:", e));
+      }
+
+      // If rating base team is not chosen yet, open base team selection immediately
+      if (!appData.currentRatingTeamId) {
+        openBaseTeamModal();
+      } else {
+        await loadCandidates();
+      }
+    }
+
+    function navigateBack() {
+      haptic("selection");
+      document.getElementById("screenRoster").classList.remove("active");
+      document.getElementById("screenTournaments").classList.add("active");
+      document.getElementById("bottomBar").style.display = "none";
+      if (tg?.BackButton) tg.BackButton.hide();
+      renderTournamentsList();
+    }
+
+    function updateRosterScreenHeader() {
+      document.getElementById("currentTournName").innerText = appData.currentReg?.tourn_name || "Турнир";
+
+      const hasBaseTeam = Boolean(appData.currentRatingTeamId || (appData.currentTeamName && appData.currentTeamName !== "Команда"));
+
+      const noBaseBox = document.getElementById("noBaseTeamBox");
+      const hasBaseBox = document.getElementById("hasBaseTeamContent");
+      const bottomBar = document.getElementById("bottomBar");
+
+      if (!hasBaseTeam) {
+        if (noBaseBox) noBaseBox.style.display = "block";
+        if (hasBaseBox) hasBaseBox.style.display = "none";
+        if (bottomBar) bottomBar.style.display = "none";
+      } else {
+        if (noBaseBox) noBaseBox.style.display = "none";
+        if (hasBaseBox) hasBaseBox.style.display = "block";
+        if (bottomBar) bottomBar.style.display = "flex";
+
+        const baseName = appData.currentTeamName && appData.currentTeamName !== "Команда" ? appData.currentTeamName : "Не выбрана";
+        document.getElementById("currentBaseTeamName").innerText = baseName;
+        document.getElementById("currentTeamTown").innerText = `Город: ${appData.currentTown || "не указан"}`;
+
+        const idBadge = appData.currentRatingTeamId ? `Рейтинг ID: ${appData.currentRatingTeamId}` : "Вне рейтинга";
+        document.getElementById("currentBaseTeamIdBadge").innerText = idBadge;
+
+        document.getElementById("currentTeamDisplayName").innerText = appData.currentDisplayName || appData.currentTeamName || "Совпадает с базовым";
+      }
+    }
+
+    function renderRosterList() {
+      const container = document.getElementById("rosterList");
+      const countEl = document.getElementById("rosterCount");
+      if (countEl) countEl.innerText = appData.currentRoster.length;
+
+      const loadingEl = document.getElementById("rosterStatusLoading");
+      if (loadingEl) {
+        loadingEl.style.display = appData.isRecalculatingStatuses ? "inline-flex" : "none";
+      }
+
+      if (!container) return;
+
+      if (!appData.currentRoster || appData.currentRoster.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state" style="padding: 20px;">
+            <div class="empty-icon">&#128101;</div>
+            <div class="empty-text">Состав пока пуст.<br>Добавьте игроков из подсказок ниже или через поиск.</div>
+          </div>
+        `;
+        return;
+      }
+
+      const statusLabels = {
+        "K": "&#128081; [К]",
+        "B": "&#128737;&#65039; [Б]",
+        "L": "&#9876;&#65039; [Л]"
+      };
+
+      let html = "";
+      appData.currentRoster.forEach((p, idx) => {
+        const status = p.status || "B";
+        const statusText = appData.isRecalculatingStatuses 
+          ? '<span class="spinner" style="width: 11px; height: 11px; display: inline-block;"></span>'
+          : (statusLabels[status] || "&#128737;&#65039; [Б]");
+        const displayName = (p.surname || p.name) ? `${p.surname || ""} ${p.name || ""}`.trim() : (p.display_name || "Игрок");
+        const sub = p.player_id ? `ID: ${p.player_id}${p.town ? " • " + p.town : ""}` : "Без ID рейтинга";
+        const disabledAttr = appData.isRecalculatingStatuses ? 'style="opacity: 0.65; pointer-events: none;"' : '';
+
+        html += `
+          <div class="roster-player">
+            <div class="player-left">
+              <div class="player-num">${idx + 1}</div>
+              <div class="status-pill status-${status}" ${disabledAttr} onclick="cyclePlayerStatus(${idx})" title="Нажмите для смены статуса">
+                ${statusText}
+              </div>
+              <div class="player-info">
+                <div class="player-name">${escapeHtml(displayName)}</div>
+                <div class="player-sub">${escapeHtml(sub)}</div>
+              </div>
+            </div>
+            <button class="btn-remove" onclick="removePlayerFromRoster(${idx})">&#10005;</button>
+          </div>
+        `;
+      });
+
+      container.innerHTML = html;
+    }
+
+    function cyclePlayerStatus(idx) {
+      haptic("impact", "medium");
+      const p = appData.currentRoster[idx];
+      if (!p) return;
+      const nextMap = { "K": "B", "B": "L", "L": "K" };
+      p.status = nextMap[p.status || "B"] || "B";
+      renderRosterList();
+    }
+
+    function removePlayerFromRoster(idx) {
+      haptic("impact", "light");
+      appData.currentRoster.splice(idx, 1);
+      renderRosterList();
+      renderCandidatesList();
+    }
+
+    async function loadCandidates() {
+      const container = document.getElementById("hintsList");
+      if (!container) return;
+      container.innerHTML = '<div style="text-align: center; padding: 12px; color: var(--hint-color);"><div class="spinner"></div></div>';
+
+      try {
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const registeredName = appData.currentReg?.team?.display_name || appData.currentReg?.team?.team_name || "";
+        const params = new URLSearchParams({
+          initData: initDataRaw,
+          team_id: appData.currentRatingTeamId || "",
+          base_name: appData.currentTeamName || "",
+          registered_name: registeredName,
+          chat_id: appData.currentChatId || "",
+          user_id: appData.user?.id || unsafeUser?.id || ""
+        });
+
+        const resp = await fetch(`/api/miniapp/candidates?${params.toString()}`);
+        if (!resp.ok) throw new Error("Ошибка загрузки подсказок");
+        const data = await resp.json();
+        appData.candidates = data.candidates || [];
+        appData.displayNamesSuggestions = data.display_names || [];
+        recalculateRosterStatuses();
+        renderCandidatesList();
+      } catch (e) {
+        container.innerHTML = '<div style="text-align: center; padding: 10px; color: var(--hint-color);">Подсказки недоступны</div>';
+      }
+    }
+
+    function recalculateRosterStatuses() {
+      if (!appData.currentRoster || appData.currentRoster.length === 0) return;
+
+      const candidateMap = new Map();
+      if (appData.candidates) {
+        appData.candidates.forEach(c => {
+          if (c.pid) candidateMap.set(Number(c.pid), c);
+        });
+      }
+
+      let hasCaptain = false;
+      appData.currentRoster.forEach(p => {
+        const pid = p.player_id ? Number(p.player_id) : null;
+        if (pid && candidateMap.has(pid)) {
+          const c = candidateMap.get(pid);
+          if (c.default_status === "K" || c.default_status === "C" || c.is_captain) {
+            if (!hasCaptain) {
+              p.status = "K";
+              hasCaptain = true;
+            } else {
+              p.status = "B";
+            }
+          } else if (c.default_status === "B" || c.is_base) {
+            p.status = "B";
+          } else {
+            p.status = "L";
+          }
+        } else {
+          p.status = "L";
+        }
+      });
+
+      renderRosterList();
+    }
+
+    function renderCandidatesList() {
+      const container = document.getElementById("hintsList");
+      if (!container) return;
+      const rosterPids = new Set(appData.currentRoster.filter(p => p.player_id).map(p => p.player_id));
+      const rosterNames = new Set(appData.currentRoster.map(p => `${p.surname || ""} ${p.name || ""}`.trim().toLowerCase()));
+
+      const availableCandidates = appData.candidates.filter(c => {
+        if (c.pid && rosterPids.has(c.pid)) return false;
+        if (c.pname && rosterNames.has(c.pname.toLowerCase())) return false;
+        return true;
+      });
+
+      if (availableCandidates.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 10px; color: var(--hint-color);">Все предложенные игроки уже добавлены в состав</div>';
+        return;
+      }
+
+      let html = "";
+      availableCandidates.slice(0, 14).forEach((c) => {
+        let catIcon = "&#128100;";
+        if (c.is_self) catIcon = "&#127775;";
+        else if (c.is_captain) catIcon = "&#128081;";
+        else if (c.is_base) catIcon = "&#128737;&#65039;";
+        else if (c.category === "history") catIcon = "&#11088;";
+        else if (c.category === "venue") catIcon = "&#128205;";
+
+        const fio = `${c.surname || ""} ${c.name || ""}`.trim();
+        const badgeStr = c.badge ? ` • ${c.badge}` : "";
+        const sub = c.pid ? `ID: ${c.pid}${c.town ? " • " + c.town : ""}${badgeStr}` : `Без ID${badgeStr}`;
+
+        html += `
+          <div class="hint-item" onclick="addCandidateToRoster(${c.pid || 0}, '${escapeQuotes(c.name)}', '${escapeQuotes(c.surname)}', '${escapeQuotes(c.patronymic || "")}', '${c.default_status || "B"}')">
+            <div class="hint-info">
+              <div class="hint-name"><span>${catIcon}</span> <b>${escapeHtml(fio)}</b></div>
+              <div class="hint-sub">${escapeHtml(sub)}</div>
+            </div>
+            <button class="hint-add-btn">&#10010; Добавить</button>
+          </div>
+        `;
+      });
+
+      container.innerHTML = html;
+    }
+
+    function escapeQuotes(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'")
+        .replace(/"/g, "&quot;");
+    }
+
+    function addCandidateToRoster(pid, name, surname, patronymic, defaultStatus) {
+      haptic("impact", "medium");
+      appData.currentRoster.push({
+        player_id: pid || null,
+        name: name || "",
+        surname: surname || "",
+        patronymic: patronymic || "",
+        status: defaultStatus || "B"
+      });
+      renderRosterList();
+      renderCandidatesList();
+    }
+
+    function onPlayerSearchInput(e) {
+      const q = e.target.value.trim();
+      clearTimeout(searchPlayerTimeout);
+      if (q.length < 2) {
+        document.getElementById("playerSearchResults").innerHTML = "";
+        return;
+      }
+      searchPlayerTimeout = setTimeout(() => doPlayerSearch(q), 300);
+    }
+
+    async function doPlayerSearch(query) {
+      const container = document.getElementById("playerSearchResults");
+      container.innerHTML = '<div style="text-align: center; padding: 8px;"><div class="spinner"></div></div>';
+      try {
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const uid = appData.user?.id || unsafeUser?.id || "";
+        const chatParam = appData.currentChatId ? `&chat_id=${encodeURIComponent(appData.currentChatId)}` : "";
+        const teamParam = appData.currentRatingTeamId ? `&team_id=${encodeURIComponent(appData.currentRatingTeamId)}` : "";
+        const userParam = uid ? `&user_id=${encodeURIComponent(uid)}` : "";
+        const initParam = initDataRaw ? `&initData=${encodeURIComponent(initDataRaw)}` : "";
+
+        const resp = await fetch(`/api/miniapp/search_players?query=${encodeURIComponent(query)}${chatParam}${teamParam}${userParam}${initParam}`);
+        const data = await resp.json();
+        const players = data.players || [];
+        
+        if (players.length === 0) {
+          container.innerHTML = `
+            <div style="padding: 10px; font-size: 13px; color: var(--hint-color); text-align: center;">
+              Игроки не найдены. Вы можете добавить игрока без ID.
+            </div>
+          `;
+          return;
+        }
+
+        let html = '<div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px;">';
+        players.slice(0, 10).forEach(p => {
+          const fio = `${p.surname || ""} ${p.name || ""} ${p.patronymic || ""}`.trim();
+          const badgeStr = p.badge ? ` • ${p.badge}` : "";
+          const sub = `ID ${p.id}${p.town ? " • " + p.town : ""}${p.rating ? " • Рейтинг: " + p.rating : ""}${badgeStr}`;
+          html += `
+            <div class="hint-item" onclick="addFoundPlayer(${p.id}, '${escapeQuotes(p.name)}', '${escapeQuotes(p.surname)}', '${escapeQuotes(p.patronymic || "")}')">
+              <div class="hint-info">
+                <div class="hint-name"><span>&#128100;</span> <b>${escapeHtml(fio)}</b></div>
+                <div class="hint-sub">${escapeHtml(sub)}</div>
+              </div>
+              <button class="hint-add-btn">&#10010; Добавить</button>
+            </div>
+          `;
+        });
+        html += "</div>";
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = '<div style="color: var(--danger-color); padding: 8px;">Ошибка поиска</div>';
+      }
+    }
+
+    function addFoundPlayer(pid, name, surname, patronymic) {
+      haptic("impact", "medium");
+      appData.currentRoster.push({
+        player_id: pid,
+        name: name,
+        surname: surname,
+        patronymic: patronymic,
+        status: "L"
+      });
+      document.getElementById("playerSearchInput").value = "";
+      document.getElementById("playerSearchResults").innerHTML = "";
+      renderRosterList();
+      renderCandidatesList();
+    }
+
+    function openUnratedModal() {
+      haptic("selection");
+      document.getElementById("inputUnratedSurname").value = "";
+      document.getElementById("inputUnratedName").value = "";
+      openModal("modalUnrated");
+    }
+
+    function addUnratedPlayer() {
+      const surname = document.getElementById("inputUnratedSurname").value.trim();
+      const name = document.getElementById("inputUnratedName").value.trim();
+      if (!name && !surname) {
+        alert("Введите имя или фамилию игрока");
+        return;
+      }
+      haptic("impact", "medium");
+      appData.currentRoster.push({
+        player_id: null,
+        name: name,
+        surname: surname,
+        patronymic: "",
+        status: "L"
+      });
+      closeModal("modalUnrated");
+      renderRosterList();
+    }
+
+    function openRenameModal() {
+      haptic("selection");
+      const baseEl = document.getElementById("renameModalBaseTeam");
+      if (baseEl) {
+        baseEl.innerText = appData.currentTeamName || "Не выбрана";
+      }
+
+      const inputEl = document.getElementById("inputRenameTeam");
+      const registeredName = appData.currentReg?.team?.display_name || appData.currentReg?.team?.team_name || "";
+      if (!appData.currentDisplayName || appData.currentDisplayName === "Команда") {
+        appData.currentDisplayName = registeredName || appData.currentTeamName || "";
+      }
+      inputEl.value = appData.currentDisplayName;
+
+      renderDisplayNamesSuggestions(appData.displayNamesSuggestions || []);
+      openModal("modalRename");
+    }
+
+    function renderDisplayNamesSuggestions(suggestions) {
+      const container = document.getElementById("displayNamesSuggestionsList");
+      if (!container) return;
+
+      if (!suggestions || suggestions.length === 0) {
+        const localSugg = [];
+        const regName = appData.currentReg?.team?.display_name || appData.currentReg?.team?.team_name;
+        if (regName && regName !== "Команда") {
+          localSugg.push({ name: regName, badge: "⭐ Название из заявки" });
+        }
+        if (appData.currentTeamName && appData.currentTeamName !== "Команда" && appData.currentTeamName !== regName) {
+          localSugg.push({ name: appData.currentTeamName, badge: "🛡 Официальное базовое" });
+        }
+        suggestions = localSugg;
+      }
+
+      if (suggestions.length === 0) {
+        container.innerHTML = "";
+        return;
+      }
+
+      const curVal = document.getElementById("inputRenameTeam")?.value.trim().toLowerCase() || "";
+      let html = '<div style="font-size: 12px; font-weight: 600; color: var(--hint-color); margin-bottom: 6px;">Предложенные и ранее использованные названия:</div>';
+      html += '<div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px;">';
+      suggestions.forEach(s => {
+        const isSelected = s.name.toLowerCase() === curVal;
+        const activeStyle = isSelected ? "background: rgba(36, 129, 204, 0.12); border: 1px solid var(--button-color);" : "";
+        html += `
+          <div class="team-select-card" style="padding: 8px 12px; border-radius: 10px; ${activeStyle}" onclick="selectDisplayNameSuggestion('${escapeQuotes(s.name)}')">
+            <div>
+              <div style="font-weight: 600; font-size: 14px;">${escapeHtml(s.name)}</div>
+              <div style="font-size: 11px; color: var(--hint-color); margin-top: 2px;">${escapeHtml(s.badge || "")}</div>
+            </div>
+            <button class="hint-add-btn" style="padding: 3px 8px; font-size: 11px;">Выбрать</button>
+          </div>
+        `;
+      });
+      html += "</div>";
+      container.innerHTML = html;
+    }
+
+    function selectDisplayNameSuggestion(name) {
+      haptic("selection");
+      const input = document.getElementById("inputRenameTeam");
+      if (input) {
+        input.value = name;
+      }
+      applyTeamRename();
+    }
+
+    function applyTeamRename() {
+      haptic("selection");
+      const val = document.getElementById("inputRenameTeam").value.trim();
+      if (val) {
+        appData.currentDisplayName = val;
+        updateRosterScreenHeader();
+      }
+      closeModal("modalRename");
+    }
+
+    function openBaseTeamModal() {
+      haptic("selection");
+      document.getElementById("inputSearchTeam").value = "";
+      document.getElementById("teamSearchResults").innerHTML = "";
+      document.getElementById("newTeamFormBox").style.display = "none";
+      renderHistoryTeams();
+      openModal("modalBaseTeam");
+    }
+
+    function renderHistoryTeams() {
+      const container = document.getElementById("historyTeamsList");
+      const hasHistory = appData.historyTeams && appData.historyTeams.length > 0;
+      const hasVenue = appData.venueTeams && appData.venueTeams.length > 0;
+
+      if (!hasHistory && !hasVenue) {
+        container.innerHTML = '<div style="color: var(--hint-color); font-size: 13px; padding: 4px 0;">История и команды площадки пока пусты</div>';
+        return;
+      }
+      let html = "";
+      if (hasHistory) {
+        html += '<div style="font-size: 11px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin-bottom: 6px;">⭐ Ваши недавние команды</div>';
+        appData.historyTeams.slice(0, 6).forEach(t => {
+          const tid = t.team_id || t.id;
+          const sub = tid ? `[ID: ${tid}]` : "(вне рейтинга)";
+          const townStr = t.town ? ` • ${escapeHtml(t.town)}` : "";
+          html += `
+            <div class="team-select-card" onclick="selectBaseTeam(${tid || null}, '${escapeQuotes(t.name)}', '${escapeQuotes(t.town || "")}')">
+              <div>
+                <div style="font-weight: 600; font-size: 14px;">&#127942; ${escapeHtml(t.name)}</div>
+                <div style="font-size: 12px; color: var(--hint-color); margin-top: 2px;">${sub}${townStr}</div>
+              </div>
+              <button class="hint-add-btn" style="padding: 4px 10px; font-size: 12px;">Выбрать</button>
+            </div>
+          `;
+        });
+      }
+
+      if (hasVenue) {
+        html += '<div style="font-size: 11px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin: 12px 0 6px 0;">📍 Команды площадки</div>';
+        appData.venueTeams.slice(0, 10).forEach(t => {
+          const tid = t.team_id || t.id;
+          const sub = tid ? `[ID: ${tid}]` : "";
+          const townStr = t.town ? ` • ${escapeHtml(t.town)}` : "";
+          const countStr = t.tourn_count ? ` • Турниров: ${t.tourn_count}` : "";
+          html += `
+            <div class="team-select-card" onclick="selectBaseTeam(${tid || null}, '${escapeQuotes(t.name)}', '${escapeQuotes(t.town || "")}')">
+              <div>
+                <div style="font-weight: 600; font-size: 14px;">&#127942; ${escapeHtml(t.name)}</div>
+                <div style="font-size: 12px; color: var(--hint-color); margin-top: 2px;">${sub}${townStr}${countStr}</div>
+              </div>
+              <button class="hint-add-btn" style="padding: 4px 10px; font-size: 12px;">Выбрать</button>
+            </div>
+          `;
+        });
+      }
+
+      container.innerHTML = html;
+    }
+
+    function onTeamSearchInput(e) {
+      const q = e.target.value.trim();
+      clearTimeout(searchTeamTimeout);
+      if (q.length < 2) {
+        document.getElementById("teamSearchResults").innerHTML = "";
+        return;
+      }
+      searchTeamTimeout = setTimeout(() => doTeamSearch(q), 300);
+    }
+
+    async function doTeamSearch(query) {
+      const container = document.getElementById("teamSearchResults");
+      container.innerHTML = '<div style="text-align: center; padding: 8px;"><div class="spinner"></div></div>';
+      try {
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const uid = appData.user?.id || unsafeUser?.id || "";
+        const chatParam = appData.currentChatId ? `&chat_id=${encodeURIComponent(appData.currentChatId)}` : "";
+        const userParam = uid ? `&user_id=${encodeURIComponent(uid)}` : "";
+        const initParam = initDataRaw ? `&initData=${encodeURIComponent(initDataRaw)}` : "";
+
+        const resp = await fetch(`/api/miniapp/search_teams?query=${encodeURIComponent(query)}${chatParam}${userParam}${initParam}`);
+        const data = await resp.json();
+        const teams = data.teams || [];
+        if (teams.length === 0) {
+          container.innerHTML = '<div style="font-size: 13px; color: var(--hint-color); padding: 6px 0;">Команды не найдены</div>';
+          return;
+        }
+        let html = '<div style="display: flex; flex-direction: column; gap: 6px;">';
+        teams.slice(0, 10).forEach(t => {
+          const tid = t.team_id || t.id;
+          const townStr = t.town ? ` • &#127961; ${escapeHtml(t.town)}` : "";
+          const badgeStr = t.badge ? ` • ${t.badge}` : "";
+          html += `
+            <div class="team-select-card" onclick="selectBaseTeam(${tid || null}, '${escapeQuotes(t.name)}', '${escapeQuotes(t.town || "")}')">
+              <div>
+                <div style="font-weight: 600; font-size: 14px;">&#127942; ${escapeHtml(t.name)}</div>
+                <div style="font-size: 12px; color: var(--hint-color); margin-top: 2px;">[ID: ${tid || "нет"}]${townStr}${badgeStr}</div>
+              </div>
+              <button class="hint-add-btn" style="padding: 4px 10px; font-size: 12px;">Выбрать</button>
+            </div>
+          `;
+        });
+        html += "</div>";
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = '<div style="color: var(--danger-color); padding: 6px 0;">Ошибка поиска</div>';
+      }
+    }
+
+    function showNewTeamForm() {
+      const box = document.getElementById("newTeamFormBox");
+      box.style.display = "block";
+      document.getElementById("inputNewTeamName").value = appData.currentDisplayName || appData.currentTeamName || "";
+      document.getElementById("inputNewTeamTown").value = appData.currentTown || "";
+      box.scrollIntoView({ behavior: "smooth" });
+    }
+
+    function applyNewTeam() {
+      const name = document.getElementById("inputNewTeamName").value.trim();
+      const town = document.getElementById("inputNewTeamTown").value.trim();
+      if (!name) {
+        alert("Введите название команды");
+        return;
+      }
+      selectBaseTeam(null, name, town);
+    }
+
+    async function selectBaseTeam(teamId, teamName, town = "") {
+      haptic("selection");
+      appData.currentRatingTeamId = teamId;
+      appData.currentTeamName = teamName;
+      appData.currentTown = town || "";
+
+      if (!appData.currentTown && teamId) {
+        try {
+          const resp = await fetch(`/api/miniapp/team_details?team_id=${teamId}`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.team && data.team.town) {
+              appData.currentTown = data.team.town;
+            }
+          }
+        } catch (e) {
+          console.error("Error fetching team town:", e);
+        }
+      }
+
+      const registeredName = appData.currentReg?.team?.display_name || appData.currentReg?.team?.team_name || "";
+      if (!appData.currentDisplayName || appData.currentDisplayName === "Команда") {
+        appData.currentDisplayName = registeredName || teamName;
+      }
+
+      const hadRoster = Boolean(appData.currentRoster && appData.currentRoster.length > 0);
+      if (hadRoster) {
+        appData.isRecalculatingStatuses = true;
+      }
+
+      closeModal("modalBaseTeam");
+      updateRosterScreenHeader();
+      renderRosterList();
+
+      try {
+        await loadCandidates();
+        if (hadRoster) {
+          showToast("Статусы игроков пересчитаны под новую команду");
+        }
+      } finally {
+        appData.isRecalculatingStatuses = false;
+        renderRosterList();
+      }
+    }
+
+    function openProfileModal() {
+      haptic("selection");
+      openModal("modalProfile");
+      const infoEl = document.getElementById("profileCurrentInfo");
+      if (appData.user?.mapping) {
+        const m = appData.user.mapping;
+        infoEl.innerHTML = `Текущий привязанный профиль: <b>[ID ${m.rating_player_id}] ${escapeHtml(m.surname)} ${escapeHtml(m.name)}</b>`;
+      } else {
+        infoEl.innerHTML = `Профиль сайта рейтинга еще не привязан. Привязка позволяет автоматически добавлять вас в составы.`;
+      }
+    }
+
+    function onProfileSearchInput(e) {
+      const q = e.target.value.trim();
+      clearTimeout(searchProfileTimeout);
+      if (q.length < 2) {
+        document.getElementById("profileSearchResults").innerHTML = "";
+        return;
+      }
+      searchProfileTimeout = setTimeout(() => doProfileSearch(q), 300);
+    }
+
+    async function doProfileSearch(query) {
+      const container = document.getElementById("profileSearchResults");
+      container.innerHTML = '<div style="text-align: center; padding: 6px;"><div class="spinner"></div></div>';
+      try {
+        const resp = await fetch(`/api/miniapp/search_players?query=${encodeURIComponent(query)}`);
+        const data = await resp.json();
+        const players = data.players || [];
+        if (players.length === 0) {
+          container.innerHTML = '<div style="font-size: 13px; color: var(--hint-color); padding: 6px 0;">Игроки не найдены</div>';
+          return;
+        }
+        let html = '<div style="display: flex; flex-direction: column; gap: 6px;">';
+        players.slice(0, 6).forEach(p => {
+          const fio = `${p.surname || ""} ${p.name || ""} ${p.patronymic || ""}`.trim();
+          html += `
+            <div class="hint-item" onclick="linkUserProfile(${p.id}, '${escapeQuotes(p.name)}', '${escapeQuotes(p.surname)}', '${escapeQuotes(p.patronymic || "")}', '${escapeQuotes(p.town || "")}')">
+              <div class="hint-info">
+                <div class="hint-name"><b>${escapeHtml(fio)}</b> [ID ${p.id}]</div>
+                <div class="hint-sub">${escapeHtml(p.town || "")}</div>
+              </div>
+              <button class="hint-add-btn">Привязать</button>
+            </div>
+          `;
+        });
+        html += "</div>";
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = '<div style="color: var(--danger-color);">Ошибка поиска</div>';
+      }
+    }
+
+    async function linkUserProfile(pid, name, surname, patronymic, town) {
+      haptic("impact", "medium");
+      try {
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const resp = await fetch("/api/miniapp/link_profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            initData: initDataRaw,
+            user_id: unsafeUser?.id || null,
+            player_id: pid,
+            name: name,
+            surname: surname,
+            patronymic: patronymic,
+            town: town
+          })
+        });
+        if (!resp.ok) throw new Error("Ошибка привязки профиля");
+        showToast("Профиль успешно привязан!");
+        closeModal("modalProfile");
+        document.getElementById("userProfileLabel").innerText = `${surname} ${name}`;
+        await loadCandidates();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    async function saveCurrentRoster() {
+      const btn = document.getElementById("btnSaveRoster");
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner" style="border-top-color: #fff;"></div> Сохранение...';
+
+      try {
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const payload = {
+          initData: initDataRaw,
+          user_id: unsafeUser?.id || null,
+          sync_req_id: appData.currentReg?.sync_req_id,
+          chat_id: appData.currentReg?.chat_id,
+          team_name: appData.currentTeamName,
+          display_name: appData.currentDisplayName,
+          town: appData.currentTown,
+          rating_team_id: appData.currentRatingTeamId,
+          roster: appData.currentRoster
+        };
+
+        const resp = await fetch("/api/miniapp/save_roster", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}));
+          throw new Error(errData.error || "Ошибка при сохранении состава");
+        }
+
+        haptic("notification", "success");
+        showToast("✅ Состав успешно сохранен!");
+
+        if (appData.currentReg && appData.currentReg.team) {
+          appData.currentReg.team.team_name = appData.currentTeamName;
+          appData.currentReg.team.display_name = appData.currentDisplayName;
+          appData.currentReg.team.town = appData.currentTown;
+          appData.currentReg.team.rating_team_id = appData.currentRatingTeamId;
+          appData.currentReg.team.roster = appData.currentRoster;
+          appData.currentReg.team.roster_submitted = true;
+        }
+
+        setTimeout(() => {
+          navigateBack();
+        }, 1200);
+
+      } catch (err) {
+        haptic("notification", "error");
+        alert("Ошибка: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = "<span>&#128190; Сохранить состав</span>";
+      }
+    }
+
+    function openModal(id) {
+      document.getElementById(id).classList.add("active");
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.remove("active");
+    }
+  </script>
+</body>
+</html>

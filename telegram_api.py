@@ -39,6 +39,25 @@ def get_webhook():
     return resp.json()
 
 
+def set_chat_menu_button(chat_id=None, text="Составы", web_app_url=None):
+    t0 = time.perf_counter()
+    url = web_app_url or helpers.get_webapp_url()
+    payload = {
+        "menu_button": {
+            "type": "web_app",
+            "text": text,
+            "web_app": {"url": url},
+        }
+    }
+    if chat_id is not None:
+        payload["chat_id"] = int(chat_id)
+    response = requests.post(BASE_URL + "setChatMenuButton", json=payload)
+    debug.log("telegram_api.set_chat_menu_button", t0)
+    if not response.ok:
+        print(f"Error setting chat menu button: {response.status_code}, {response.text}")
+    return response
+
+
 def send_message(
     chat_id, message_thread_id, message, formatted=False, reply_to_message_id=None, reply_markup=None
 ):
@@ -279,7 +298,7 @@ def set_message_reaction(chat_id, message_id, emoji="❤️"):
     t0 = time.perf_counter()
     params = {
         "chat_id": str(chat_id),
-        "message_id": message_id,
+        "message_id": int(message_id) if message_id is not None else None,
         "reaction": [{"type": "emoji", "emoji": emoji}],
     }
     response = requests.post(
@@ -289,7 +308,7 @@ def set_message_reaction(chat_id, message_id, emoji="❤️"):
     )
     debug.log("telegram_api.set_message_reaction", t0, f"chat_id={chat_id}, message_id={message_id}")
     if not response.ok:
-        print(f"Error setting reaction {response.status_code}, {response.reason}")
+        print(f"Error setting reaction {response.status_code}, {response.reason}: {response.text}")
     return response
 
 
@@ -319,9 +338,11 @@ def send_document(chat_id, file_content, filename, caption=None):
 
 def delete_message(chat_id, message_id):
     t0 = time.perf_counter()
-    params = {"chat_id": str(chat_id), "message_id": message_id}
+    params = {"chat_id": str(chat_id), "message_id": int(message_id) if message_id is not None else None}
     response = requests.post(BASE_URL + "deleteMessage", json=params)
     debug.log("telegram_api.delete_message", t0, f"chat_id={chat_id}, message_id={message_id}")
+    if not response.ok:
+        print(f"Error deleting message {response.status_code}, {response.reason}: {response.text}")
     return response
 
 

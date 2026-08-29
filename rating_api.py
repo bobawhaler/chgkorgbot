@@ -6,6 +6,7 @@ from dateutil.relativedelta import relativedelta
 from urllib.parse import quote
 import requests
 import helpers
+import datastore
 import pytz
 import debug
 
@@ -522,16 +523,16 @@ def get_team_players(team_id):
     return result
 
 
-_base_players_cache = {}
-
-
 def get_team_base_players(team_id):
     if not team_id:
         return set(), None
-    if team_id in _base_players_cache:
-        return _base_players_cache[team_id]
+
+    cached = datastore.get_cached_team_base_roster(team_id)
+    if cached is not None:
+        return cached
+
     try:
-        resp = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 100}, headers={"Accept": "application/json"})
+        resp = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 100}, headers={"Accept": "application/json"}, timeout=4)
         if resp.ok:
             data = resp.json()
             if isinstance(data, list) and data:
@@ -543,13 +544,11 @@ def get_team_base_players(team_id):
                     if item.get("playerNumber") == 1:
                         captain_id = item.get("idplayer")
                         break
-                res = (base_pids, captain_id)
-                _base_players_cache[team_id] = res
-                return res
+                datastore.cache_team_base_roster(team_id, base_pids, captain_id)
+                return base_pids, captain_id
     except Exception as e:
         print(f"Error fetching base players for team_id={team_id}: {e}")
-_player_metrics_cache = {}
-_tourn_results_cache = {}
+    return set(), None
 
 
 def search_players(query):
@@ -614,11 +613,12 @@ def search_players(query):
         print(f"Error searching players query={query}: {e}")
 
     def fetch_player_metrics(pid):
-        now = time.time()
-        if pid in _player_metrics_cache:
-            cached_ts, r_val, tc_val = _player_metrics_cache[pid]
-            if now - cached_ts < 3600:
-                return pid, r_val, tc_val
+        try:
+            cached = datastore.get_cached_player(pid)
+            if cached and (cached.get("tourn_count", 0) > 0 or cached.get("rating", 0) > 0):
+                return pid, cached.get("rating", 0), cached.get("tourn_count", 0)
+        except Exception:
+            pass
 
         rating = 0
         tourn_count = 0
@@ -628,26 +628,34 @@ def search_players(query):
                 tourns = r_t.json()
                 tourn_count = len(tourns)
                 if tourns:
-                    latest_t = tourns[-1]
+                    latest_t = tourns[-1] if isinstance(tourns[-1], dict) else {}
                     tid = latest_t.get("idtournament")
                     team_id = latest_t.get("idteam")
                     if tid and team_id:
-                        cache_key = f"{tid}_{team_id}"
-                        if cache_key in _tourn_results_cache:
-                            res = _tourn_results_cache[cache_key]
-                        else:
-                            r_res = requests.get(f"{API_URL}/tournaments/{tid}/results", params={"team": team_id, "includeTeamMembers": 1}, headers={"Accept": "application/json"}, timeout=4)
-                            res = r_res.json() if r_res.ok and isinstance(r_res.json(), list) else []
-                            _tourn_results_cache[cache_key] = res
-
+                        r_res = requests.get(f"{API_URL}/tournaments/{tid}/results", params={"team": team_id, "includeTeamMembers": 1}, headers={"Accept": "application/json"}, timeout=4)
+                        res = r_res.json() if r_res.ok and isinstance(r_res.json(), list) else []
                         for r_item in res:
-                            for tm in r_item.get("teamMembers", []):
-                                if tm.get("player") and tm["player"].get("id") == pid:
-                                    rating = tm.get("rating") or 0
-                                    break
+                            if isinstance(r_item, dict):
+                                for tm in r_item.get("teamMembers", []):
+                                    if isinstance(tm, dict) and tm.get("player") and tm["player"].get("id") == pid:
+                                        rating = tm.get("rating") or 0
+                                        break
         except Exception:
             pass
-        _player_metrics_cache[pid] = (now, rating, tourn_count)
+
+        try:
+            p_obj = results.get(pid, {})
+            datastore.cache_player(pid, {
+                "name": p_obj.get("name", ""),
+                "surname": p_obj.get("surname", ""),
+                "patronymic": p_obj.get("patronymic", ""),
+                "town": p_obj.get("town", ""),
+                "rating": rating,
+                "tourn_count": tourn_count,
+            })
+        except Exception:
+            pass
+
         return pid, rating, tourn_count
 
     if results:
@@ -677,8 +685,172 @@ def search_players(query):
         except Exception:
             pass
 
-    debug.log("rating_api.search_players", t0, f"query={query} -> {len(result)}")
-    return result
+def sync_venue_history(venue_id, months=12):
+    """
+    Incrementally synchronizes tournaments, teams, and rosters for a venue from the rating API.
+    Fetches up to `months` back on first sync, or incrementally since last sync.
+    Stores aggregated teams and rosters into Datastore (VenueData and VenueSyncState).
+    """
+    t0 = time.perf_counter()
+    import datastore
+
+    if not venue_id:
+        return {"teams_count": 0, "tournaments_count": 0}
+
+    state = datastore.get_venue_sync_state(venue_id) or {}
+    last_synced_at = state.get("last_synced_at")
+    synced_req_ids = set(state.get("synced_req_ids", []))
+
+    now = datetime.datetime.now(pytz.utc)
+
+    if last_synced_at and isinstance(last_synced_at, datetime.datetime):
+        from_dt = last_synced_at - datetime.timedelta(days=14)
+    else:
+        from_dt = now - relativedelta(months=months)
+
+    from_date_str = from_dt.strftime("%Y-%m-%d")
+
+    params = {"dateStart[after]": from_date_str}
+    sync_requests = _fetch_paginated(
+        f"{API_URL}/venues/{venue_id}/requests",
+        params,
+        _VENUES_REQUESTS_ITEMS_PER_PAGE,
+    )
+
+    if not sync_requests:
+        datastore.save_venue_sync_state(venue_id, now, synced_req_ids)
+        return {"teams_count": 0, "tournaments_count": 0}
+
+    valid_reqs = [r for r in sync_requests if r.get("status") == "A" and r.get("id")]
+    
+    def process_sync_req(sync_req):
+        s_id = str(sync_req["id"])
+        if s_id in synced_req_ids:
+            return None
+        
+        t_id = sync_req.get("tournamentId")
+        issued_at = sync_req.get("issuedAt") or sync_req.get("dateStart")
+        issued_ts = 0
+        if issued_at:
+            try:
+                dt_obj = datetime.datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
+                issued_ts = int(dt_obj.timestamp())
+            except Exception:
+                issued_ts = int(now.timestamp())
+
+        if not t_id:
+            try:
+                r_det = requests.get(f"{API_URL}/tournament_synch_requests/{s_id}", headers={"Accept": "application/json"}, timeout=4)
+                if r_det.ok:
+                    t_id = r_det.json().get("tournamentId")
+            except Exception:
+                pass
+
+        if not t_id:
+            return s_id, [], {}, {}
+
+        teams_data = []
+        rosters_data = {}
+        display_names_data = {}
+        try:
+            r_res = requests.get(
+                f"{API_URL}/tournaments/{t_id}/results",
+                params={"venue": venue_id, "includeTeamMembers": 1, "itemsPerPage": 100},
+                headers={"Accept": "application/json"},
+                timeout=6,
+            )
+            if r_res.ok and isinstance(r_res.json(), list):
+                results_list = r_res.json()
+                for res_item in results_list:
+                    # Verify matching venue or synchRequest if present in result item
+                    sr = res_item.get("synchRequest")
+                    if sr and isinstance(sr, dict):
+                        sr_vid = sr.get("venue", {}).get("id") if isinstance(sr.get("venue"), dict) else None
+                        sr_id = sr.get("id")
+                        if sr_vid and int(sr_vid) != int(venue_id) and sr_id and str(sr_id) != str(s_id):
+                            continue
+
+                    team_obj = res_item.get("team") if isinstance(res_item.get("team"), dict) else {}
+                    t_id_val = team_obj.get("id") or res_item.get("idteam")
+                    if not t_id_val:
+                        continue
+                    
+                    t_name = team_obj.get("name") or res_item.get("current", {}).get("name") or res_item.get("current_name") or "Команда"
+                    t_town = ""
+                    if isinstance(team_obj.get("town"), dict):
+                        t_town = team_obj.get("town", {}).get("name", "")
+                    elif isinstance(team_obj.get("town"), str):
+                        t_town = team_obj.get("town", "")
+                    elif isinstance(res_item.get("current", {}).get("town"), dict):
+                        t_town = res_item.get("current", {}).get("town", {}).get("name", "")
+                    
+                    teams_data.append({
+                        "team_id": int(t_id_val),
+                        "name": t_name,
+                        "town": t_town,
+                        "tourn_count": 1,
+                        "last_played_ts": issued_ts,
+                    })
+
+                    curr_name = (res_item.get("current", {}).get("name") or res_item.get("current_name") or "").strip()
+                    if curr_name:
+                        tid_k = str(t_id_val)
+                        if tid_k not in display_names_data:
+                            display_names_data[tid_k] = []
+                        display_names_data[tid_k].append({
+                            "name": curr_name,
+                            "last_played_ts": issued_ts,
+                        })
+
+                    members = []
+                    for tm in res_item.get("teamMembers", []):
+                        player_obj = tm.get("player") if isinstance(tm.get("player"), dict) else {}
+                        p_id = player_obj.get("id") or tm.get("idplayer")
+                        if p_id:
+                            members.append({
+                                "player_id": int(p_id),
+                                "name": player_obj.get("name", ""),
+                                "surname": player_obj.get("surname", ""),
+                                "patronymic": player_obj.get("patronymic", ""),
+                                "tourn_count": 1,
+                                "last_played_ts": issued_ts,
+                            })
+                    if members:
+                        rosters_data[str(t_id_val)] = members
+        except Exception as e:
+            print(f"Error fetching results for tournament {t_id} (sync_req {s_id}): {e}")
+
+        return s_id, teams_data, rosters_data, display_names_data
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(process_sync_req, valid_reqs))
+
+    all_teams_flat = []
+    all_rosters_merged = {}
+    all_display_names = {}
+    synced_ids_set = set(synced_req_ids)
+
+    for item in results:
+        if not item:
+            continue
+        s_id, t_data, r_data, d_data = item
+        synced_ids_set.add(int(s_id))
+        all_teams_flat.extend(t_data)
+        for tid_str, p_list in r_data.items():
+            if tid_str not in all_rosters_merged:
+                all_rosters_merged[tid_str] = []
+            all_rosters_merged[tid_str].extend(p_list)
+        for tid_str, d_list in d_data.items():
+            if tid_str not in all_display_names:
+                all_display_names[tid_str] = []
+            all_display_names[tid_str].extend(d_list)
+
+    if all_teams_flat or all_rosters_merged or all_display_names:
+        datastore.update_venue_data_incremental(venue_id, all_teams_flat, all_rosters_merged, all_display_names)
+
+    datastore.save_venue_sync_state(venue_id, now, synced_ids_set)
+    debug.log("rating_api.sync_venue_history", t0, f"venue_id={venue_id}, new_tourns={len([r for r in results if r])}, teams={len(all_teams_flat)}")
+    return {"teams_count": len(all_teams_flat), "tournaments_count": len([r for r in results if r])}
 
 
 def main():

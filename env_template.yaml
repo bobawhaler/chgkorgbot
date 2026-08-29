@@ -5,4 +5,7 @@ env_variables:
   ADMIN_CHAT_ID: '<YOUR_ADMIN_CHAT_ID>'
   CLOUD_TASKS_QUEUE: 'bot-tasks'
   APP_REGION: 'us-central1'
+  GEMINI_API_KEY: '<YOUR_GEMINI_API_KEY>'
+  GEMINI_MODEL: 'gemini-3.6-flash'
+
 
