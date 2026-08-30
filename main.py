@@ -267,6 +267,7 @@ def api_miniapp_init():
                 print(f"Error fetching user registrations: {e}")
                 raw_regs = []
 
+        tournaments = []
         registrations = []
         seen_keys = set()
         venue_ids = []
@@ -274,51 +275,72 @@ def api_miniapp_init():
         for reg in raw_regs:
             sync_req_id = reg.get("sync_req_id")
             reg_chat_id = reg.get("chat_id")
-            is_rep = bool(reg.get("is_representative") or (is_admin and active_test_role != "player"))
+            is_rep = bool(reg.get("is_representative") or (is_admin and active_test_role in ("admin", "rep", "representative", None)))
+            if active_test_role == "player":
+                is_rep = False
 
             if reg_chat_id:
-                c_cfg = datastore.get_chat_config(reg_chat_id)
-                if c_cfg and "venues" in c_cfg:
-                    for vid in c_cfg["venues"]:
-                        if vid not in venue_ids:
-                            venue_ids.append(vid)
+                try:
+                    c_cfg = datastore.get_chat_config(reg_chat_id)
+                    if c_cfg and "venues" in c_cfg:
+                        for vid in c_cfg["venues"]:
+                            if vid not in venue_ids:
+                                venue_ids.append(vid)
+                except Exception as e:
+                    print(f"Error getting chat config: {e}")
 
-            teams = reg.get("teams", [])
+            raw_teams = reg.get("teams", [])
             tourn_name = reg.get("tourn_name", "Турнир")
             
-            if teams:
-                for t in teams:
+            teams_list = []
+            if raw_teams:
+                for t in raw_teams:
+                    team_dict = {
+                        "team_name": t.get("team_name", "Команда"),
+                        "display_name": t.get("display_name", t.get("team_name", "Команда")),
+                        "rating_team_id": t.get("rating_team_id"),
+                        "town": t.get("town", ""),
+                        "roster": list(t.get("roster", [])),
+                        "roster_submitted": bool(t.get("roster_submitted") or t.get("roster")),
+                        "user_id": t.get("user_id"),
+                        "username": t.get("username", "")
+                    }
+                    teams_list.append(team_dict)
                     registrations.append({
                         "sync_req_id": sync_req_id,
                         "chat_id": reg_chat_id,
                         "tourn_name": tourn_name,
                         "is_representative": is_rep,
-                        "team": {
-                            "team_name": t.get("team_name", "Команда"),
-                            "display_name": t.get("display_name", t.get("team_name", "Команда")),
-                            "rating_team_id": t.get("rating_team_id"),
-                            "town": t.get("town", ""),
-                            "roster": list(t.get("roster", [])),
-                            "roster_submitted": bool(t.get("roster_submitted") or t.get("roster")),
-                            "user_id": t.get("user_id"),
-                            "username": t.get("username", "")
-                        }
+                        "team": team_dict
                     })
             else:
+                default_team = {
+                    "team_name": "Команда",
+                    "display_name": "Команда",
+                    "rating_team_id": None,
+                    "town": "",
+                    "roster": [],
+                    "roster_submitted": False
+                }
+                teams_list.append(default_team)
                 registrations.append({
                     "sync_req_id": sync_req_id,
                     "chat_id": reg_chat_id,
                     "tourn_name": tourn_name,
                     "is_representative": is_rep,
-                    "team": {
-                        "team_name": "Команда",
-                        "display_name": "Команда",
-                        "rating_team_id": None,
-                        "town": "",
-                        "roster": [],
-                        "roster_submitted": False
-                    }
+                    "team": default_team
                 })
+
+            submitted_count = sum(1 for t in teams_list if t.get("roster_submitted"))
+            tournaments.append({
+                "sync_req_id": sync_req_id,
+                "chat_id": reg_chat_id,
+                "tourn_name": tourn_name,
+                "is_representative": is_rep,
+                "submitted_count": submitted_count,
+                "total_count": len(teams_list),
+                "teams": teams_list
+            })
 
         venue_teams = []
         if venue_ids:
@@ -338,6 +360,7 @@ def api_miniapp_init():
         return jsonify({
             "user": user,
             "user_mapping": user_mapping,
+            "tournaments": tournaments,
             "registrations": registrations,
             "history_teams": hist_teams,
             "venue_teams": venue_teams,
@@ -348,6 +371,57 @@ def api_miniapp_init():
         import traceback
         traceback.print_exc()
         return jsonify({"error": f"Внутренняя ошибка сервера: {exc}"}), 500
+
+
+@app.route("/api/miniapp/export_csv", methods=["GET", "POST"])
+def api_miniapp_export_csv():
+    try:
+        data = request.get_json(silent=True) or {}
+        sync_req_id = request.args.get("sync_req_id") or data.get("sync_req_id")
+        chat_id_raw = request.args.get("chat_id") or data.get("chat_id")
+        user_id_raw = request.args.get("user_id") or data.get("user_id")
+        init_data = request.args.get("initData") or data.get("initData", "")
+        send_tg = request.args.get("send_tg") or data.get("send_tg")
+
+        user, user_id, is_admin = get_authenticated_user({"initData": init_data, "user_id": user_id_raw})
+        if not user or not user_id:
+            return jsonify({"error": "Доступ запрещен"}), 403
+
+        if not sync_req_id or not chat_id_raw:
+            return jsonify({"error": "Не указан ID турнира или чата"}), 400
+
+        try:
+            chat_id = int(chat_id_raw)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Некорректный ID чата"}), 400
+
+        reg = datastore.get_team_registration(chat_id, sync_req_id)
+        if not reg:
+            return jsonify({"error": "Турнир не найден"}), 404
+
+        stored_role = datastore.get_user_test_role(user_id) if is_admin else None
+        is_rep = bool(is_admin or datastore.is_user_representative(reg, user_id) or stored_role in ("admin", "rep", "representative"))
+        if not is_rep:
+            return jsonify({"error": "Экспорт CSV доступен только представителям турнира"}), 403
+
+        teams = reg.get("teams", [])
+        csv_content = helpers.generate_roster_csv(teams)
+        tourn_name = reg.get("tourn_name", "roster")
+        tourn_name_safe = helpers.normalize_tourn_name(tourn_name)
+        filename = f"roster_{sync_req_id}_{tourn_name_safe}.csv"
+
+        if send_tg:
+            caption = f"📄 <b>Файл импорта составов для сайта рейтинга</b>\nТурнир: «{tourn_name}»\nКоманд: {len(teams)}"
+            telegram_api.send_document(user_id, csv_content, filename, caption=caption)
+            return jsonify({"ok": True, "sent_to_tg": True, "filename": filename})
+
+        resp = make_response(csv_content)
+        resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+        resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return resp
+    except Exception as exc:
+        print(f"Error exporting CSV: {exc}")
+        return jsonify({"error": f"Ошибка выгрузки CSV: {exc}"}), 500
 
 
 @app.route("/api/miniapp/candidates", methods=["GET"])

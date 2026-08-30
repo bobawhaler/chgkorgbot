@@ -471,6 +471,51 @@ def cache_team_base_roster(team_id, base_pids, captain_id):
         print(f"Error writing CachedTeamBase team_id={team_id}: {e}")
 
 
+def get_cached_team_players(team_id):
+    if not team_id:
+        return None
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("CachedTeamPlayers", str(team_id))
+        entity = datastore_client.get(key)
+        if entity and "players" in entity:
+            return json.loads(entity["players"])
+    except Exception as e:
+        print(f"Error reading CachedTeamPlayers team_id={team_id}: {e}")
+    return None
+
+
+def cache_team_players(team_id, players):
+    if not team_id or players is None:
+        return
+    try:
+        clean_players = []
+        for p in players:
+            if not isinstance(p, dict):
+                continue
+            clean_players.append({
+                "id": int(p.get("id") or p.get("player_id") or 0),
+                "name": str(p.get("name") or ""),
+                "surname": str(p.get("surname") or ""),
+                "patronymic": str(p.get("patronymic") or ""),
+                "town": str(p.get("town") or ""),
+                "season_recency": int(p.get("season_recency") or 0),
+                "tourn_count": int(p.get("tourn_count") or 0),
+                "tourn_recency": int(p.get("tourn_recency") or 0),
+            })
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("CachedTeamPlayers", str(team_id))
+        entity = datastore.Entity(key=key, exclude_from_indexes=("players",))
+        entity.update({
+            "team_id": int(team_id),
+            "players": json.dumps(clean_players, default=str, ensure_ascii=False),
+            "cached_at": datetime.datetime.now(pytz.utc),
+        })
+        datastore_client.put(entity)
+    except Exception as e:
+        print(f"Error writing CachedTeamPlayers team_id={team_id}: {e}")
+
+
 # --- Team Registration & Roster Functions ---
 
 def add_team_registration(chat_id, thread_id, sync_req_id, message_id, tourn_name, representative_text="", narrator_text="", start_time="", start_time_ts=None, created_by_user_id=None):
@@ -1158,12 +1203,17 @@ def get_venues_data(venue_ids):
                     "town": t.get("town", ""),
                     "tourn_count": t.get("tourn_count", 0),
                     "last_played_ts": t.get("last_played_ts", 0),
+                    "display_names": list(t.get("display_names", [])),
                 }
             else:
                 aggregated_teams[key]["tourn_count"] += t.get("tourn_count", 0)
                 aggregated_teams[key]["last_played_ts"] = max(
                     aggregated_teams[key]["last_played_ts"], t.get("last_played_ts", 0)
                 )
+                curr_dns = aggregated_teams[key].setdefault("display_names", [])
+                for dn in t.get("display_names", []):
+                    if dn and dn not in curr_dns:
+                        curr_dns.append(dn)
 
     final_teams = sorted(
         list(aggregated_teams.values()),
@@ -1215,7 +1265,20 @@ def update_venue_data_incremental(venue_id, new_teams, new_team_rosters, new_tea
                         "town": nt.get("town", ""),
                         "tourn_count": nt.get("tourn_count", 1),
                         "last_played_ts": nt.get("last_played_ts", 0),
+                        "display_names": nt.get("display_names", []),
                     }
+
+            if new_team_display_names:
+                for tid_str, d_list in new_team_display_names.items():
+                    if tid_str in existing_teams:
+                        curr_dnames = list(existing_teams[tid_str].get("display_names", []))
+                        names_set = set(curr_dnames)
+                        for d_item in d_list:
+                            dname = d_item.get("name") if isinstance(d_item, dict) else str(d_item)
+                            if dname and dname not in names_set:
+                                curr_dnames.append(dname)
+                                names_set.add(dname)
+                        existing_teams[tid_str]["display_names"] = curr_dnames[:5]
 
             sorted_teams = sorted(
                 list(existing_teams.values()),

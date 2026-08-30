@@ -439,6 +439,12 @@ def get_team_players(team_id):
     t0 = time.perf_counter()
     if not team_id:
         return []
+
+    cached = datastore.get_cached_team_players(team_id)
+    if cached is not None:
+        debug.log("rating_api.get_team_players [CACHED]", t0, f"team_id={team_id} -> {len(cached)}")
+        return cached
+
     players_dict = {}
     try:
         # 1. Fetch recent season members (latest 2 seasons)
@@ -464,11 +470,16 @@ def get_team_players(team_id):
                     for p in fetched_players:
                         if p and isinstance(p, dict) and "id" in p:
                             pid = p["id"]
-                            p_copy = dict(p)
-                            p_copy["season_recency"] = 2 if season_map.get(pid) == max_season else 1
-                            p_copy["tourn_count"] = 0
-                            p_copy["tourn_recency"] = 0
-                            players_dict[pid] = p_copy
+                            players_dict[pid] = {
+                                "id": pid,
+                                "name": p.get("name", ""),
+                                "surname": p.get("surname", ""),
+                                "patronymic": p.get("patronymic", ""),
+                                "town": p.get("town", ""),
+                                "season_recency": 2 if season_map.get(pid) == max_season else 1,
+                                "tourn_count": 0,
+                                "tourn_recency": 0,
+                            }
 
         # 2. Fetch players from recent tournaments played by team (last 30 tournaments / past year)
         resp_t = requests.get(f"{API_URL}/teams/{team_id}/tournaments", params={"itemsPerPage": 100}, headers={"Accept": "application/json"})
@@ -519,6 +530,8 @@ def get_team_players(team_id):
     except Exception as e:
         print(f"Error fetching team players for team_id={team_id}: {e}")
     result = list(players_dict.values())
+    if result:
+        datastore.cache_team_players(team_id, result)
     debug.log("rating_api.get_team_players", t0, f"team_id={team_id} -> {len(result)}")
     return result
 

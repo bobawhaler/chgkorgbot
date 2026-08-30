@@ -747,13 +747,25 @@ def search_teams_tiered(query, user_id=None, chat_id=None):
             tname = t.get("name") or t.get("team_name", "Команда")
             raw_town = t.get("town")
             town = raw_town.get("name", "") if isinstance(raw_town, dict) else (str(raw_town) if raw_town else "")
-            if not query_clean or (query_clean in tname.lower() or (town and query_clean in town.lower())):
+            dnames = t.get("display_names", [])
+
+            matched_dname = None
+            if query_clean:
+                for dn in dnames:
+                    if query_clean in str(dn).lower():
+                        matched_dname = str(dn)
+                        break
+
+            matched = not query_clean or (query_clean in tname.lower() or (town and query_clean in town.lower()) or matched_dname)
+            if matched:
+                badge_text = f"⭐ Ваша история ({matched_dname})" if matched_dname and matched_dname.lower() != tname.lower() else "⭐ Ваша история"
                 entry = {
                     "id": tid,
                     "name": tname,
+                    "display_name": matched_dname,
                     "town": town,
                     "source": "history",
-                    "badge": "⭐ Ваша история",
+                    "badge": badge_text,
                 }
                 if tid:
                     seen_ids.add(int(tid))
@@ -786,13 +798,25 @@ def search_teams_tiered(query, user_id=None, chat_id=None):
                 continue
             if tname.lower() in seen_names:
                 continue
-            if not query_clean or (query_clean in tname.lower() or (town and query_clean in town.lower())):
+
+            dnames = t.get("display_names", [])
+            matched_dname = None
+            if query_clean:
+                for dn in dnames:
+                    if query_clean in str(dn).lower():
+                        matched_dname = str(dn)
+                        break
+
+            matched = not query_clean or (query_clean in tname.lower() or (town and query_clean in town.lower()) or matched_dname)
+            if matched:
+                badge_text = f"📍 Площадка ({matched_dname})" if matched_dname and matched_dname.lower() != tname.lower() else "📍 Площадка"
                 entry = {
                     "id": tid,
                     "name": tname,
+                    "display_name": matched_dname,
                     "town": town,
                     "source": "venue",
-                    "badge": "📍 Площадка",
+                    "badge": badge_text,
                 }
                 if tid:
                     seen_ids.add(int(tid))
@@ -826,6 +850,55 @@ def search_teams_tiered(query, user_id=None, chat_id=None):
         except Exception as e:
             print(f"Error in rating_api.search_teams during tiered search: {e}")
 
+    def compute_team_relevance(entry):
+        if not query_clean:
+            source_order = {"history": 3, "venue": 2, "rating": 1}
+            return source_order.get(entry.get("source"), 0)
+
+        tname = (entry.get("name") or "").strip().lower()
+        town = (entry.get("town") or "").strip().lower()
+        dname = (entry.get("display_name") or "").strip().lower()
+        source = entry.get("source", "rating")
+
+        score = 0.0
+
+        # 1. Primary priority: Official base team name matches
+        if tname == query_clean:
+            score += 1000.0
+        elif tname.startswith(query_clean):
+            score += 800.0
+        elif query_clean in tname:
+            score += 600.0
+        elif all(word in tname for word in query_clean.split()):
+            score += 500.0
+
+        # 2. Secondary priority: One-off display name matches
+        if dname:
+            if dname == query_clean:
+                score += 400.0
+            elif dname.startswith(query_clean):
+                score += 300.0
+            elif query_clean in dname:
+                score += 200.0
+            elif all(word in dname for word in query_clean.split()):
+                score += 150.0
+
+        # 3. Lowest priority: Town matches
+        if town:
+            if town == query_clean:
+                score += 100.0
+            elif query_clean in town:
+                score += 50.0
+
+        # Context source bonus
+        if source == "history":
+            score += 15.0
+        elif source == "venue":
+            score += 10.0
+
+        return score
+
+    results.sort(key=compute_team_relevance, reverse=True)
     return results
 
 
@@ -989,6 +1062,26 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
     roster_pids = {p["player_id"] for p in current_roster if p.get("player_id")}
     roster_names = {f"{p.get('surname', '')} {p.get('name', '')}".strip().lower() for p in current_roster}
 
+    base_pids = set()
+    captain_id = None
+    if rating_team_id:
+        try:
+            b_res = rating_api.get_team_base_players(rating_team_id)
+            if b_res and isinstance(b_res, (tuple, list)) and len(b_res) == 2:
+                base_pids = set(b_res[0]) if b_res[0] else set()
+                captain_id = b_res[1]
+        except Exception as e:
+            print(f"Error getting team base players for candidates: {e}")
+
+    def resolve_status(pid):
+        if not pid or not rating_team_id:
+            return "L"
+        if captain_id and pid == captain_id:
+            return "K"
+        if pid in base_pids:
+            return "B"
+        return "L"
+
     candidates_map = {}
     now_ts = time.time()
 
@@ -1009,7 +1102,7 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
                 "is_self": True,
                 "category": "self",
                 "badge": "👤 Ваш профиль",
-                "default_status": determine_player_default_status(rating_team_id, my_pid, current_roster),
+                "default_status": resolve_status(my_pid),
                 "score": 100000.0,
             }
 
@@ -1034,7 +1127,7 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
                     "pname": pname,
                     "category": "history",
                     "badge": "⭐ Ваша история",
-                    "default_status": determine_player_default_status(rating_team_id, pid, current_roster),
+                    "default_status": resolve_status(pid),
                     "score": 10000.0,
                 }
             h_score = 0.0
@@ -1063,7 +1156,6 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
     # 3. Base team players from rating site API
     if rating_team_id:
         team_players = rating_api.get_team_players(rating_team_id)
-        base_pids, captain_id = rating_api.get_team_base_players(rating_team_id)
         for tp in team_players:
             pid = tp.get("id") or tp.get("player_id")
             pname = f"{tp.get('surname', '')} {tp.get('name', '')}".strip()
@@ -1084,7 +1176,7 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
                     "is_captain": is_cap,
                     "category": "team",
                     "badge": "👑 Капитан" if is_cap else ("🛡 Базовый" if is_base else "⚔️ Состав"),
-                    "default_status": determine_player_default_status(rating_team_id, pid, current_roster),
+                    "default_status": resolve_status(pid),
                     "score": 0.0,
                 }
             t_score = 0.0
@@ -1121,7 +1213,7 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
                         "pname": pname,
                         "category": "venue",
                         "badge": "📍 Игрок площадки",
-                        "default_status": determine_player_default_status(rating_team_id, pid, current_roster),
+                        "default_status": resolve_status(pid),
                         "score": 2500.0,
                     }
                 candidates_map[key]["score"] += vp.get("tourn_count", 1) * 100.0
