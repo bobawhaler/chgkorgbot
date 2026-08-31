@@ -437,6 +437,38 @@ def cache_player(pid, pdata):
         print(f"Error writing CachedPlayer pid={pid}: {e}")
 
 
+def search_cached_players(query, limit=10):
+    if not query:
+        return []
+    try:
+        q_clean = query.strip().lower()
+        datastore_client = get_datastore_client()
+        if q_clean.isdigit():
+            p = get_cached_player(int(q_clean))
+            return [p] if p else []
+
+        q = datastore_client.query(kind="CachedPlayer")
+        matches = []
+        for entity in q.fetch(limit=100):
+            p_fio = f"{entity.get('surname', '')} {entity.get('name', '')} {entity.get('patronymic', '')}".lower()
+            if q_clean in p_fio:
+                matches.append({
+                    "id": int(entity.get("player_id", entity.key.name or 0)),
+                    "name": entity.get("name", ""),
+                    "surname": entity.get("surname", ""),
+                    "patronymic": entity.get("patronymic", ""),
+                    "town": entity.get("town", ""),
+                    "source": "cache",
+                    "badge": "⚡ Из кэша",
+                })
+                if len(matches) >= limit:
+                    break
+        return matches
+    except Exception as e:
+        print(f"Error searching cached players: {e}")
+    return []
+
+
 def get_cached_team_base_roster(team_id):
     if not team_id:
         return None

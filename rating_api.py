@@ -573,39 +573,34 @@ def search_players(query):
     words = query.split()
     results = {}
 
+    # If numeric ID, direct lookup first
+    if len(words) == 1 and words[0].isdigit():
+        p_by_id = get_player_by_id(int(words[0]))
+        if p_by_id:
+            results[p_by_id["id"]] = p_by_id
+            return [p_by_id]
+
     def do_search(params):
-        def fetch_page(page_num):
-            try:
-                resp = requests.get(f"{API_URL}/players", params={**params, "itemsPerPage": 100, "page": page_num}, headers={"Accept": "application/json"}, timeout=5)
-                if resp.ok and isinstance(resp.json(), list):
-                    return resp.json()
-            except Exception as e:
-                print(f"Error in search request page={page_num} {params}: {e}")
-            return []
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            pages_items = list(executor.map(fetch_page, range(1, 6)))
-
-        for items in pages_items:
-            for p in items:
-                if isinstance(p, dict) and "id" in p and p["id"] not in results:
-                    pdata = {
-                        "id": p["id"],
-                        "name": p.get("name", ""),
-                        "surname": p.get("surname", ""),
-                        "patronymic": p.get("patronymic", ""),
-                        "town": "",
-                        "rating": 0,
-                        "tourn_count": 0,
-                    }
-                    results[p["id"]] = pdata
+        try:
+            resp = requests.get(f"{API_URL}/players", params={**params, "itemsPerPage": 30, "page": 1}, headers={"Accept": "application/json"}, timeout=4)
+            if resp.ok and isinstance(resp.json(), list):
+                for p in resp.json():
+                    if isinstance(p, dict) and "id" in p and p["id"] not in results:
+                        pdata = {
+                            "id": p["id"],
+                            "name": p.get("name", ""),
+                            "surname": p.get("surname", ""),
+                            "patronymic": p.get("patronymic", ""),
+                            "town": "",
+                            "rating": 0,
+                            "tourn_count": 0,
+                        }
+                        results[p["id"]] = pdata
+        except Exception as e:
+            print(f"Error in search request {params}: {e}")
 
     try:
         if len(words) == 1:
-            if words[0].isdigit():
-                p_by_id = get_player_by_id(int(words[0]))
-                if p_by_id:
-                    results[p_by_id["id"]] = p_by_id
             do_search({"surname": words[0].capitalize()})
             if words[0] != words[0].capitalize():
                 do_search({"surname": words[0]})
@@ -625,71 +620,19 @@ def search_players(query):
     except Exception as e:
         print(f"Error searching players query={query}: {e}")
 
-    def fetch_player_metrics(pid):
-        try:
-            cached = datastore.get_cached_player(pid)
-            if cached and (cached.get("tourn_count", 0) > 0 or cached.get("rating", 0) > 0):
-                return pid, cached.get("rating", 0), cached.get("tourn_count", 0)
-        except Exception:
-            pass
-
-        rating = 0
-        tourn_count = 0
-        try:
-            r_t = requests.get(f"{API_URL}/players/{pid}/tournaments", params={"itemsPerPage": 100}, headers={"Accept": "application/json"}, timeout=4)
-            if r_t.ok and isinstance(r_t.json(), list):
-                tourns = r_t.json()
-                tourn_count = len(tourns)
-                if tourns:
-                    latest_t = tourns[-1] if isinstance(tourns[-1], dict) else {}
-                    tid = latest_t.get("idtournament")
-                    team_id = latest_t.get("idteam")
-                    if tid and team_id:
-                        r_res = requests.get(f"{API_URL}/tournaments/{tid}/results", params={"team": team_id, "includeTeamMembers": 1}, headers={"Accept": "application/json"}, timeout=4)
-                        res = r_res.json() if r_res.ok and isinstance(r_res.json(), list) else []
-                        for r_item in res:
-                            if isinstance(r_item, dict):
-                                for tm in r_item.get("teamMembers", []):
-                                    if isinstance(tm, dict) and tm.get("player") and tm["player"].get("id") == pid:
-                                        rating = tm.get("rating") or 0
-                                        break
-        except Exception:
-            pass
-
-        try:
-            p_obj = results.get(pid, {})
-            datastore.cache_player(pid, {
-                "name": p_obj.get("name", ""),
-                "surname": p_obj.get("surname", ""),
-                "patronymic": p_obj.get("patronymic", ""),
-                "town": p_obj.get("town", ""),
-                "rating": rating,
-                "tourn_count": tourn_count,
-            })
-        except Exception:
-            pass
-
-        return pid, rating, tourn_count
-
-    if results:
-        pids = list(results.keys())[:500]
-        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-            metrics = list(executor.map(fetch_player_metrics, pids))
-            for pid, rating, t_count in metrics:
-                if pid in results:
-                    results[pid]["rating"] = rating
-                    results[pid]["tourn_count"] = t_count
-
     result = list(results.values())
-    result.sort(key=lambda x: (x.get("rating", 0), x.get("tourn_count", 0)), reverse=True)
 
-    top_pids = [p["id"] for p in result[:15] if not p.get("town")]
+    # Fast town enrichment for top results
+    top_pids = [p["id"] for p in result[:10] if not p.get("town")]
     if top_pids:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            towns = list(executor.map(get_player_town, top_pids))
-            for pid, town in zip(top_pids, towns):
-                if town and pid in results:
-                    results[pid]["town"] = town
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                towns = list(executor.map(get_player_town, top_pids))
+                for pid, town in zip(top_pids, towns):
+                    if town and pid in results:
+                        results[pid]["town"] = town
+        except Exception:
+            pass
 
     for p in result:
         try:
@@ -697,6 +640,9 @@ def search_players(query):
             datastore.cache_player(p["id"], p)
         except Exception:
             pass
+
+    debug.log("rating_api.search_players", t0, f"query={query} -> {len(result)}")
+    return list(results.values())
 
 def sync_venue_history(venue_id, months=12):
     """

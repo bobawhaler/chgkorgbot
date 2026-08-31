@@ -1021,32 +1021,67 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
                 results.append(entry)
 
     # 3. Rating site API direct search
-    if query_clean and len(query_clean) >= 3:
-        try:
-            api_players = rating_api.search_players(query)
-            for ap in api_players:
-                pid = ap.get("id")
-                if pid and int(pid) in seen_ids:
-                    continue
-                pname = f"{ap.get('surname', '')} {ap.get('name', '')}".strip()
-                full_name = f"{ap.get('surname', '')} {ap.get('name', '')} {ap.get('patronymic', '')}".strip()
-                if pname.lower() in seen_names:
-                    continue
-                entry = {
-                    "id": pid,
-                    "name": ap.get("name", ""),
-                    "surname": ap.get("surname", ""),
-                    "patronymic": ap.get("patronymic", ""),
-                    "town": ap.get("town", ""),
-                    "source": "rating",
-                    "badge": "",
-                }
-                if pid:
-                    seen_ids.add(int(pid))
-                seen_names.add(pname.lower())
-                results.append(entry)
-        except Exception as e:
-            print(f"Error in rating_api.search_players during tiered search: {e}")
+    if query_clean:
+        if query_clean.isdigit():
+            try:
+                p_by_id = rating_api.get_player_by_id(int(query_clean))
+                if p_by_id and int(p_by_id["id"]) not in seen_ids:
+                    results.insert(0, {
+                        "id": p_by_id["id"],
+                        "name": p_by_id.get("name", ""),
+                        "surname": p_by_id.get("surname", ""),
+                        "patronymic": p_by_id.get("patronymic", ""),
+                        "town": p_by_id.get("town", ""),
+                        "source": "rating",
+                        "badge": "🎯 По ID",
+                    })
+                    seen_ids.add(int(p_by_id["id"]))
+            except Exception as e:
+                print(f"Error in direct player id lookup: {e}")
+        elif len(query_clean) >= 2:
+            # 3a. Search cached players in Datastore
+            try:
+                cached_matches = datastore.search_cached_players(query, limit=10)
+                for cp in cached_matches:
+                    pid = cp.get("id")
+                    if pid and int(pid) in seen_ids:
+                        continue
+                    pname = f"{cp.get('surname', '')} {cp.get('name', '')}".strip()
+                    if pname.lower() in seen_names:
+                        continue
+                    results.append(cp)
+                    if pid:
+                        seen_ids.add(int(pid))
+                    seen_names.add(pname.lower())
+            except Exception as e:
+                print(f"Error in search_cached_players: {e}")
+
+            # 3b. External Rating site API direct search
+            try:
+                api_players = rating_api.search_players(query)
+                for ap in api_players:
+                    pid = ap.get("id")
+                    if pid and int(pid) in seen_ids:
+                        continue
+                    pname = f"{ap.get('surname', '')} {ap.get('name', '')}".strip()
+                    full_name = f"{ap.get('surname', '')} {ap.get('name', '')} {ap.get('patronymic', '')}".strip()
+                    if pname.lower() in seen_names:
+                        continue
+                    entry = {
+                        "id": pid,
+                        "name": ap.get("name", ""),
+                        "surname": ap.get("surname", ""),
+                        "patronymic": ap.get("patronymic", ""),
+                        "town": ap.get("town", ""),
+                        "source": "rating",
+                        "badge": "",
+                    }
+                    if pid:
+                        seen_ids.add(int(pid))
+                    seen_names.add(pname.lower())
+                    results.append(entry)
+            except Exception as e:
+                print(f"Error in rating_api.search_players during tiered search: {e}")
 
     return results
 
