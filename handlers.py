@@ -261,7 +261,7 @@ def system_tic_handler():
                         f"⏰ <b>Напоминание о сдаче состава!</b>\n\n"
                         f"Наступило время турнира <b>\"{tourn_name}\"</b>.\n"
                         f"Пожалуйста, сдайте состав вашей команды <b>\"{team_name}\"</b>.\n\n"
-                        f"Отправьте /roster в этот личный чат с ботом для вызова меню выбора и забора состава."
+                        f"Откройте приложение по кнопке <b>«Составы»</b> внизу экрана или отправьте /roster в этот личный чат с ботом."
                     )
                     pm_res = telegram_api.send_message(user_id, None, msg_text, formatted=True)
                     t["reminders_count"] = rem_count + 1
@@ -895,7 +895,7 @@ def handle_callback_query(cq):
             pm_msg = (
                 f"⚠️ <b>Запрос исправления состава от представителя площадки!</b>\n\n"
                 f"Представитель площадки вернул состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b> на доработку.\n\n"
-                f"Пожалуйста, проверьте и скорректируйте состав. Отправьте /roster в этот личный чат с ботом для редактирования."
+                f"Пожалуйста, проверьте и скорректируйте состав по кнопке <b>«Составы»</b> внизу экрана или отправьте /roster в этот личный чат с ботом."
             )
             telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
             telegram_api.answer_callback_query(cq_id, text=f"↩️ Состав команды «{tname_str}» возвращен на доработку!", show_alert=True)
@@ -918,7 +918,7 @@ def handle_callback_query(cq):
             pm_msg = (
                 f"⏰ <b>Напоминание от представителя площадки!</b>\n\n"
                 f"Представитель площадки запрашивает состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b>.\n\n"
-                f"Пожалуйста, отправьте /roster в этот личный чат с ботом для указания состава."
+                f"Пожалуйста, откройте приложение по кнопке <b>«Составы»</b> внизу экрана или отправьте /roster в этот личный чат с ботом для указания состава."
             )
             telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
             telegram_api.answer_callback_query(cq_id, text=f"🔔 Напоминание отправлено капитану команды «{tname_str}»!", show_alert=True)

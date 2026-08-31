@@ -560,7 +560,7 @@ def format_team_registration_text(tourn_name, url, representative_text, narrator
         "<i>Для отмены ответьте <code>/unregister</code> или <code>отмена</code>.</i>",
     ]
     if include_roster_prompt:
-        lines.append("<i>Для сдачи состава перейдите в ЛС с ботом и нажмите <b>Старт</b>.</i>")
+        lines.append("<i>Для сдачи состава перейдите в ЛС с ботом и нажмите кнопку <b>«Составы»</b> (или <b>Старт</b>).</i>")
     lines.extend([
         "",
         f"<b>Зарегистрированные команды ({len(teams)}):</b>",
