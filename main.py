@@ -317,24 +317,6 @@ def api_miniapp_init():
                         "is_representative": is_rep,
                         "team": team_dict
                     })
-            else:
-                default_team = {
-                    "team_name": "Команда",
-                    "display_name": "Команда",
-                    "rating_team_id": None,
-                    "town": "",
-                    "roster": [],
-                    "roster_submitted": False,
-                    "submitted_externally": False
-                }
-                teams_list.append(default_team)
-                registrations.append({
-                    "sync_req_id": sync_req_id,
-                    "chat_id": reg_chat_id,
-                    "tourn_name": tourn_name,
-                    "is_representative": is_rep,
-                    "team": default_team
-                })
 
             submitted_count = sum(1 for t in teams_list if t.get("roster_submitted"))
             tournaments.append({
