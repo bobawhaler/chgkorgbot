@@ -694,7 +694,7 @@ def reset_unsubmitted_reminders(chat_id, sync_req_id):
         return entity, notified_users
 
 
-def reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id):
+def reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id=None, team_index=None):
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
     with datastore_client.transaction():
@@ -703,15 +703,49 @@ def reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id):
             return None, None
         teams = list(entity.get("teams", []))
         rejected_team_name = None
-        for team in teams:
-            if team.get("user_id") == target_user_id:
+        for idx, team in enumerate(teams):
+            match = False
+            if team_index is not None and idx == team_index:
+                match = True
+            elif target_user_id and team.get("user_id") == target_user_id:
+                match = True
+            if match:
                 team["roster_submitted"] = False
+                team["submitted_externally"] = False
                 team["reminders_count"] = 0
                 team["last_reminder_ts"] = 0
                 rejected_team_name = team.get("display_name") or team.get("team_name", "Команда")
                 break
         entity["teams"] = teams
         datastore_client.put(entity)
+        return entity, rejected_team_name
+
+
+def mark_team_roster_submitted_in_ds(chat_id, sync_req_id, target_user_id=None, team_index=None, submitted=True, external=True):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            return None, None
+        teams = list(entity.get("teams", []))
+        updated_team_name = None
+        for idx, team in enumerate(teams):
+            match = False
+            if team_index is not None and idx == team_index:
+                match = True
+            elif target_user_id and team.get("user_id") == target_user_id:
+                match = True
+            if match:
+                team["roster_submitted"] = bool(submitted)
+                team["submitted_externally"] = bool(submitted and external)
+                updated_team_name = team.get("display_name") or team.get("team_name", "Команда")
+                break
+        entity["teams"] = teams
+        datastore_client.put(entity)
+        return entity, updated_team_name
+
+
 def _sort_registrations_newest_first(entities):
     def sort_key(entity):
         if not entity:
@@ -765,11 +799,6 @@ def cleanup_old_registrations(days=14):
         keys_to_delete = []
 
         for reg in query.fetch():
-            st = reg.get("status")
-            if st == "archived":
-                keys_to_delete.append(reg.key)
-                continue
-
             start_ts = reg.get("start_time_ts")
             created_at = reg.get("created_at")
             created_ts = int(created_at.timestamp()) if created_at else 0
@@ -777,7 +806,7 @@ def cleanup_old_registrations(days=14):
             should_delete = False
             if start_ts and (now_ts - start_ts > max_age_sec):
                 should_delete = True
-            elif not start_ts and created_ts and (now_ts - created_ts > max_age_sec * 2):
+            elif not start_ts and created_ts and (now_ts - created_ts > max_age_sec):
                 should_delete = True
 
             if should_delete:

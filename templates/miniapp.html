@@ -281,41 +281,52 @@
     .tourn-team-item {
       background: var(--secondary-bg-color);
       border-radius: var(--item-radius);
-      padding: 12px;
-      border: 1px solid rgba(0, 0, 0, 0.06);
+      padding: 12px 14px;
+      border: 1px solid rgba(128, 128, 128, 0.12);
       display: flex;
-      justify-content: space-between;
-      align-items: center;
+      flex-direction: column;
+      gap: 6px;
       cursor: pointer;
       transition: var(--transition);
-      gap: 10px;
     }
 
     .tourn-team-item:active {
-      transform: scale(0.985);
-      background: rgba(36, 129, 204, 0.05);
+      transform: scale(0.99);
+      background: rgba(36, 129, 204, 0.04);
     }
 
-    .tourn-team-info {
-      flex: 1;
-      min-width: 0;
+    .tourn-team-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
     }
 
     .tourn-team-title {
       font-size: 15px;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--text-color);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
+      line-height: 1.3;
+      flex: 1;
+      min-width: 0;
+      word-break: break-word;
     }
 
     .tourn-team-sub {
       font-size: 12px;
       color: var(--hint-color);
-      margin-top: 3px;
-      line-height: 1.3;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    .tourn-team-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(128, 128, 128, 0.08);
     }
 
     .team-info-box {
@@ -826,6 +837,14 @@
       <!-- State B: Base Team CHOSEN (Full Roster Management) -->
       <div id="hasBaseTeamContent" style="display: none;">
         
+        <!-- Representative Actions Card -->
+        <div id="repRosterActionBox" class="card" style="display: none; background: rgba(36, 129, 204, 0.07); border: 1px solid rgba(36, 129, 204, 0.25); margin-bottom: 12px; padding: 12px 14px;">
+          <div style="font-size: 11px; font-weight: 700; color: var(--link-color); text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.3px;">
+            👮 Действия представителя площадки:
+          </div>
+          <div id="repRosterActionButtons" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+        </div>
+
         <!-- Team Details Card -->
         <div class="card" style="margin-bottom: 14px; padding: 14px 16px;">
           
@@ -1300,7 +1319,7 @@
           // Representative / Admin Organizer Dashboard
           appData.tournaments.forEach((tourn, tournIndex) => {
             const teams = tourn.teams || [];
-            const submittedCount = teams.filter(t => t.roster_submitted || (t.roster && t.roster.length > 0)).length;
+            const submittedCount = teams.filter(t => t.roster_submitted || t.submitted_externally || (t.roster && t.roster.length > 0)).length;
             const totalCount = teams.length;
             const allSubmitted = totalCount > 0 && submittedCount === totalCount;
             const statsBadge = allSubmitted
@@ -1311,30 +1330,74 @@
 
             let teamsHtml = "";
             teams.forEach((t, tIndex) => {
-              const isSub = t.roster_submitted || (t.roster && t.roster.length > 0);
-              const subBadge = isSub
-                ? `<span class="badge badge-success" style="font-size: 11px; padding: 3px 6px;">&#128994; Сдан (${t.roster.length} чел.)</span>`
-                : `<span class="badge badge-danger" style="font-size: 11px; padding: 3px 6px;">&#128308; Не сдан</span>`;
+              const isSub = Boolean(t.roster_submitted);
+              const isExt = Boolean(t.submitted_externally);
+              const hasRoster = Boolean(t.roster && t.roster.length > 0);
+              
+              let subBadge = "";
+              if (isExt) {
+                subBadge = `<span class="badge" style="background: rgba(36, 129, 204, 0.15); color: var(--link-color); font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128994; Сдан вне бота</span>`;
+              } else if (isSub) {
+                const countNote = hasRoster ? ` (${t.roster.length} чел.)` : "";
+                subBadge = `<span class="badge badge-success" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128994; Сдан${countNote}</span>`;
+              } else if (hasRoster && !isSub) {
+                subBadge = `<span class="badge badge-warning" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128993; На доработке</span>`;
+              } else {
+                subBadge = `<span class="badge badge-danger" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128308; Не сдан</span>`;
+              }
               
               const teamDisplayName = t.display_name || t.team_name || "Команда";
               const baseInfo = t.rating_team_id ? `🛡 Базовая: ${escapeHtml(t.team_name)} [ID ${t.rating_team_id}]` : `🛡 ${escapeHtml(t.team_name || "Без ID рейтинга")}`;
               const townInfo = t.town ? ` • 🏙 ${escapeHtml(t.town)}` : "";
               const contactInfo = t.username ? ` • 👤 @${escapeHtml(t.username)}` : (t.user_id ? ` • 👤 ID ${t.user_id}` : "");
 
+              let actionButtons = `
+                <button class="btn btn-secondary btn-sm" style="flex: 1; min-width: 85px; padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 8px;" onclick="event.stopPropagation(); selectTournamentTeam(${tournIndex}, ${tIndex})">
+                  ✏️ Состав
+                </button>
+              `;
+
+              if (isSub || isExt) {
+                actionButtons += `
+                  <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--danger-color); border-color: rgba(229, 57, 53, 0.4);" onclick="event.stopPropagation(); rejectTeamRoster(${tournIndex}, ${tIndex})">
+                    ↩️ На доработку
+                  </button>
+                `;
+              } else {
+                actionButtons += `
+                  <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: #2e7d32; border-color: rgba(46, 125, 50, 0.4);" onclick="event.stopPropagation(); markTeamSubmitted(${tournIndex}, ${tIndex}, true)">
+                    ✅ Сдан вне бота
+                  </button>
+                `;
+                if (t.user_id) {
+                  actionButtons += `
+                    <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--link-color); border-color: rgba(36, 129, 204, 0.4);" onclick="event.stopPropagation(); remindTeamRoster(${tournIndex}, ${tIndex})">
+                      🔔 Напомнить
+                    </button>
+                  `;
+                }
+              }
+
+              if (isExt) {
+                actionButtons += `
+                  <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--hint-color); border-color: rgba(128, 128, 128, 0.4);" onclick="event.stopPropagation(); markTeamSubmitted(${tournIndex}, ${tIndex}, false)">
+                    ❌ Снять отметку
+                  </button>
+                `;
+              }
+
               teamsHtml += `
                 <div class="tourn-team-item" onclick="selectTournamentTeam(${tournIndex}, ${tIndex})">
-                  <div class="tourn-team-info">
-                    <div class="tourn-team-title">
-                      <b>${escapeHtml(teamDisplayName)}</b>
-                      ${subBadge}
-                    </div>
-                    <div class="tourn-team-sub">
-                      ${baseInfo}${townInfo}${contactInfo}
-                    </div>
+                  <div class="tourn-team-header">
+                    <div class="tourn-team-title">&#127942; ${escapeHtml(teamDisplayName)}</div>
+                    <div style="flex-shrink: 0;">${subBadge}</div>
                   </div>
-                  <button class="btn btn-secondary btn-sm" style="flex-shrink: 0; padding: 4px 8px; font-size: 12px;" onclick="event.stopPropagation(); selectTournamentTeam(${tournIndex}, ${tIndex})">
-                    ✏️ Состав
-                  </button>
+                  <div class="tourn-team-sub">
+                    ${baseInfo}${townInfo}${contactInfo}
+                  </div>
+                  <div class="tourn-team-actions">
+                    ${actionButtons}
+                  </div>
                 </div>
               `;
             });
@@ -1547,6 +1610,188 @@
       }
     }
 
+    async function rejectTeamRoster(tournIndex, teamIndex) {
+      haptic("impact", "medium");
+      const tourn = appData.tournaments[tournIndex];
+      if (!tourn) return;
+      const team = (tourn.teams || [])[teamIndex];
+      if (!team) return;
+
+      const teamName = team.display_name || team.team_name || "команды";
+      if (!confirm(`Вернуть состав команды «${teamName}» на доработку?\nКапитану будет отправлено уведомление в Telegram.`)) {
+        return;
+      }
+
+      try {
+        showToast("Возврат состава на доработку...");
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const uid = appData.user?.id || unsafeUser?.id || "";
+
+        const payload = {
+          sync_req_id: tourn.sync_req_id,
+          chat_id: tourn.chat_id,
+          target_user_id: team.user_id,
+          team_index: teamIndex,
+          user_id: uid,
+          initData: initDataRaw
+        };
+
+        const resp = await fetch("/api/miniapp/reject_roster", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          throw new Error(data.error || "Ошибка при возврате состава");
+        }
+
+        team.roster_submitted = false;
+        team.submitted_externally = false;
+        haptic("notification", "success");
+        showToast(`↩️ Состав «${teamName}» возвращен на доработку!`);
+        renderTournamentsList();
+      } catch (err) {
+        console.error("Reject roster error:", err);
+        haptic("notification", "error");
+        alert("Не удалось вернуть состав: " + err.message);
+      }
+    }
+
+    async function markTeamSubmitted(tournIndex, teamIndex, external) {
+      haptic("impact", "light");
+      const tourn = appData.tournaments[tournIndex];
+      if (!tourn) return;
+      const team = (tourn.teams || [])[teamIndex];
+      if (!team) return;
+
+      const teamName = team.display_name || team.team_name || "команды";
+      const actionText = external ? `Отметить состав «${teamName}» как сданный другим способом (вне бота)?` : `Снять отметку о сдаче состава для «${teamName}»?`;
+      if (!confirm(actionText)) {
+        return;
+      }
+
+      try {
+        showToast("Обновление статуса...");
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const uid = appData.user?.id || unsafeUser?.id || "";
+
+        const payload = {
+          sync_req_id: tourn.sync_req_id,
+          chat_id: tourn.chat_id,
+          target_user_id: team.user_id,
+          team_index: teamIndex,
+          submitted: external,
+          external: external,
+          user_id: uid,
+          initData: initDataRaw
+        };
+
+        const resp = await fetch("/api/miniapp/mark_submitted", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          throw new Error(data.error || "Ошибка при обновлении статуса");
+        }
+
+        team.roster_submitted = external;
+        team.submitted_externally = external;
+        haptic("notification", "success");
+        showToast(external ? `✅ Состав «${teamName}» отмечен как сданный!` : `Отметка для «${teamName}» снята.`);
+        renderTournamentsList();
+      } catch (err) {
+        console.error("Mark submitted error:", err);
+        haptic("notification", "error");
+        alert("Не удалось обновить статус: " + err.message);
+      }
+    }
+
+    async function remindTeamRoster(tournIndex, teamIndex) {
+      haptic("impact", "light");
+      const tourn = appData.tournaments[tournIndex];
+      if (!tourn) return;
+      const team = (tourn.teams || [])[teamIndex];
+      if (!team || !team.user_id) {
+        alert("У этой команды не указан контакт капитана в Telegram");
+        return;
+      }
+
+      const teamName = team.display_name || team.team_name || "команды";
+      if (!confirm(`Отправить напоминание о сдаче состава капитану команды «${teamName}» в Telegram?`)) {
+        return;
+      }
+
+      try {
+        showToast("Отправка напоминания...");
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const uid = appData.user?.id || unsafeUser?.id || "";
+
+        const payload = {
+          sync_req_id: tourn.sync_req_id,
+          chat_id: tourn.chat_id,
+          target_user_id: team.user_id,
+          team_name: teamName,
+          user_id: uid,
+          initData: initDataRaw
+        };
+
+        const resp = await fetch("/api/miniapp/remind_roster", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          throw new Error(data.error || "Ошибка при отправке напоминания");
+        }
+
+        haptic("notification", "success");
+        showToast(`🔔 Напоминание отправлено капитану «${teamName}»!`);
+      } catch (err) {
+        console.error("Remind error:", err);
+        haptic("notification", "error");
+        alert("Не удалось отправить напоминание: " + err.message);
+      }
+    }
+
+    async function rejectCurrentTeamRoster() {
+      if (!appData.currentTourn || !appData.currentTeamRef) return;
+      const tournIndex = appData.tournaments.findIndex(t => t.sync_req_id === appData.currentTourn.sync_req_id && String(t.chat_id) === String(appData.currentTourn.chat_id));
+      const teamIndex = (appData.currentTourn.teams || []).indexOf(appData.currentTeamRef);
+      if (tournIndex !== -1 && teamIndex !== -1) {
+        await rejectTeamRoster(tournIndex, teamIndex);
+        updateRosterScreenHeader();
+      }
+    }
+
+    async function markCurrentTeamSubmitted(external) {
+      if (!appData.currentTourn || !appData.currentTeamRef) return;
+      const tournIndex = appData.tournaments.findIndex(t => t.sync_req_id === appData.currentTourn.sync_req_id && String(t.chat_id) === String(appData.currentTourn.chat_id));
+      const teamIndex = (appData.currentTourn.teams || []).indexOf(appData.currentTeamRef);
+      if (tournIndex !== -1 && teamIndex !== -1) {
+        await markTeamSubmitted(tournIndex, teamIndex, external);
+        updateRosterScreenHeader();
+      }
+    }
+
+    async function remindCurrentTeamRoster() {
+      if (!appData.currentTourn || !appData.currentTeamRef) return;
+      const tournIndex = appData.tournaments.findIndex(t => t.sync_req_id === appData.currentTourn.sync_req_id && String(t.chat_id) === String(appData.currentTourn.chat_id));
+      const teamIndex = (appData.currentTourn.teams || []).indexOf(appData.currentTeamRef);
+      if (tournIndex !== -1 && teamIndex !== -1) {
+        await remindTeamRoster(tournIndex, teamIndex);
+      }
+    }
+
     function navigateBack() {
       haptic("selection");
       document.getElementById("screenRoster").classList.remove("active");
@@ -1582,6 +1827,52 @@
         document.getElementById("currentBaseTeamIdBadge").innerText = idBadge;
 
         document.getElementById("currentTeamDisplayName").innerText = appData.currentDisplayName || appData.currentTeamName || "Совпадает с базовым";
+
+        // Representative Actions Box
+        const repBox = document.getElementById("repRosterActionBox");
+        const repButtons = document.getElementById("repRosterActionButtons");
+        const isRep = (appData.activeTestRole in { "admin": 1, "rep": 1, "representative": 1 }) || appData.currentTourn?.is_representative;
+
+        if (repBox && repButtons) {
+          if (isRep && appData.currentTeamRef) {
+            repBox.style.display = "block";
+            const team = appData.currentTeamRef;
+            const isSub = Boolean(team.roster_submitted);
+            const isExt = Boolean(team.submitted_externally);
+
+            let btns = "";
+            if (isSub || isExt) {
+              btns += `
+                <button class="btn btn-outline btn-sm" style="color: var(--danger-color); border-color: rgba(229, 57, 53, 0.4); border-radius: 8px;" onclick="rejectCurrentTeamRoster()">
+                  ↩️ Вернуть состав на доработку
+                </button>
+              `;
+            } else {
+              btns += `
+                <button class="btn btn-outline btn-sm" style="color: #2e7d32; border-color: rgba(46, 125, 50, 0.4); border-radius: 8px;" onclick="markCurrentTeamSubmitted(true)">
+                  ✅ Отметить: состав сдан другим способом
+                </button>
+              `;
+              if (team.user_id) {
+                btns += `
+                  <button class="btn btn-outline btn-sm" style="color: var(--link-color); border-color: rgba(36, 129, 204, 0.4); border-radius: 8px;" onclick="remindCurrentTeamRoster()">
+                    🔔 Напомнить капитану в Telegram
+                  </button>
+                `;
+              }
+            }
+            if (isExt) {
+              btns += `
+                <button class="btn btn-outline btn-sm" style="color: var(--hint-color); border-color: rgba(128, 128, 128, 0.4); border-radius: 8px;" onclick="markCurrentTeamSubmitted(false)">
+                  ❌ Снять отметку о сдаче вне бота
+                </button>
+              `;
+            }
+            repButtons.innerHTML = btns;
+          } else {
+            repBox.style.display = "none";
+          }
+        }
       }
     }
 

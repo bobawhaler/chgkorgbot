@@ -295,13 +295,17 @@ def api_miniapp_init():
             teams_list = []
             if raw_teams:
                 for t in raw_teams:
+                    is_sub = bool(t.get("roster_submitted") or (t.get("roster") and len(t.get("roster")) > 0) or t.get("submitted_externally"))
+                    if t.get("roster_submitted") is False and not t.get("submitted_externally"):
+                        is_sub = False
                     team_dict = {
                         "team_name": t.get("team_name", "Команда"),
                         "display_name": t.get("display_name", t.get("team_name", "Команда")),
                         "rating_team_id": t.get("rating_team_id"),
                         "town": t.get("town", ""),
                         "roster": list(t.get("roster", [])),
-                        "roster_submitted": bool(t.get("roster_submitted") or t.get("roster")),
+                        "roster_submitted": is_sub,
+                        "submitted_externally": bool(t.get("submitted_externally")),
                         "user_id": t.get("user_id"),
                         "username": t.get("username", "")
                     }
@@ -320,7 +324,8 @@ def api_miniapp_init():
                     "rating_team_id": None,
                     "town": "",
                     "roster": [],
-                    "roster_submitted": False
+                    "roster_submitted": False,
+                    "submitted_externally": False
                 }
                 teams_list.append(default_team)
                 registrations.append({
@@ -373,15 +378,14 @@ def api_miniapp_init():
         return jsonify({"error": f"Внутренняя ошибка сервера: {exc}"}), 500
 
 
-@app.route("/api/miniapp/export_csv", methods=["GET", "POST"])
+@app.route("/api/miniapp/export_csv", methods=["GET"])
 def api_miniapp_export_csv():
     try:
-        data = request.get_json(silent=True) or {}
-        sync_req_id = request.args.get("sync_req_id") or data.get("sync_req_id")
-        chat_id_raw = request.args.get("chat_id") or data.get("chat_id")
-        user_id_raw = request.args.get("user_id") or data.get("user_id")
-        init_data = request.args.get("initData") or data.get("initData", "")
-        send_tg = request.args.get("send_tg") or data.get("send_tg")
+        init_data = request.args.get("initData", "")
+        user_id_raw = request.args.get("user_id")
+        sync_req_id = request.args.get("sync_req_id")
+        chat_id_raw = request.args.get("chat_id")
+        send_tg = request.args.get("send_tg") == "1"
 
         user, user_id, is_admin = get_authenticated_user({"initData": init_data, "user_id": user_id_raw})
         if not user or not user_id:
@@ -422,6 +426,148 @@ def api_miniapp_export_csv():
     except Exception as exc:
         print(f"Error exporting CSV: {exc}")
         return jsonify({"error": f"Ошибка выгрузки CSV: {exc}"}), 500
+
+
+@app.route("/api/miniapp/reject_roster", methods=["POST"])
+def api_miniapp_reject_roster():
+    try:
+        data = request.get_json() or {}
+        user, user_id, is_admin = get_authenticated_user(data)
+        if not user or not user_id:
+            return jsonify({"error": "Доступ запрещен"}), 403
+
+        sync_req_id = data.get("sync_req_id")
+        chat_id_raw = data.get("chat_id")
+        target_uid_raw = data.get("target_user_id")
+        team_idx = data.get("team_index")
+
+        if not sync_req_id or not chat_id_raw:
+            return jsonify({"error": "Не указан ID турнира или чата"}), 400
+
+        try:
+            chat_id = int(chat_id_raw)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Некорректный ID чата"}), 400
+
+        reg = datastore.get_team_registration(chat_id, sync_req_id)
+        if not reg:
+            return jsonify({"error": "Турнир не найден"}), 404
+
+        stored_role = datastore.get_user_test_role(user_id) if is_admin else None
+        is_rep = bool(is_admin or datastore.is_user_representative(reg, user_id) or stored_role in ("admin", "rep", "representative"))
+        if not is_rep:
+            return jsonify({"error": "Действие доступно только представителям турнира"}), 403
+
+        target_uid = int(target_uid_raw) if target_uid_raw and str(target_uid_raw).isdigit() else None
+        t_index = int(team_idx) if team_idx is not None else None
+
+        reg_entity, rejected_tname = datastore.reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id=target_uid, team_index=t_index)
+        tourn_name = reg_entity.get("tourn_name", "турнир") if reg_entity else "турнир"
+        tname_str = rejected_tname or "вашей команды"
+
+        if target_uid:
+            pm_msg = (
+                f"⚠️ <b>Запрос исправления состава от представителя площадки!</b>\n\n"
+                f"Представитель площадки вернул состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b> на доработку.\n\n"
+                f"Пожалуйста, проверьте и скорректируйте состав по кнопке <b>«Составы»</b> или отправьте /roster в этот личный чат с ботом."
+            )
+            telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
+
+        return jsonify({"ok": True, "team_name": tname_str, "tourn_name": tourn_name})
+    except Exception as exc:
+        print(f"Error in api_miniapp_reject_roster: {exc}")
+        return jsonify({"error": f"Ошибка возврата состава: {exc}"}), 500
+
+
+@app.route("/api/miniapp/mark_submitted", methods=["POST"])
+def api_miniapp_mark_submitted():
+    try:
+        data = request.get_json() or {}
+        user, user_id, is_admin = get_authenticated_user(data)
+        if not user or not user_id:
+            return jsonify({"error": "Доступ запрещен"}), 403
+
+        sync_req_id = data.get("sync_req_id")
+        chat_id_raw = data.get("chat_id")
+        target_uid_raw = data.get("target_user_id")
+        team_idx = data.get("team_index")
+        submitted = data.get("submitted", True)
+        external = data.get("external", True)
+
+        if not sync_req_id or not chat_id_raw:
+            return jsonify({"error": "Не указан ID турнира или чата"}), 400
+
+        try:
+            chat_id = int(chat_id_raw)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Некорректный ID чата"}), 400
+
+        reg = datastore.get_team_registration(chat_id, sync_req_id)
+        if not reg:
+            return jsonify({"error": "Турнир не найден"}), 404
+
+        stored_role = datastore.get_user_test_role(user_id) if is_admin else None
+        is_rep = bool(is_admin or datastore.is_user_representative(reg, user_id) or stored_role in ("admin", "rep", "representative"))
+        if not is_rep:
+            return jsonify({"error": "Действие доступно только представителям турнира"}), 403
+
+        target_uid = int(target_uid_raw) if target_uid_raw and str(target_uid_raw).isdigit() else None
+        t_index = int(team_idx) if team_idx is not None else None
+
+        reg_entity, updated_tname = datastore.mark_team_roster_submitted_in_ds(
+            chat_id, sync_req_id, target_user_id=target_uid, team_index=t_index, submitted=submitted, external=external
+        )
+        return jsonify({"ok": True, "team_name": updated_tname, "submitted": submitted, "submitted_externally": external})
+    except Exception as exc:
+        print(f"Error in api_miniapp_mark_submitted: {exc}")
+        return jsonify({"error": f"Ошибка обновления статуса: {exc}"}), 500
+
+
+@app.route("/api/miniapp/remind_roster", methods=["POST"])
+def api_miniapp_remind_roster():
+    try:
+        data = request.get_json() or {}
+        user, user_id, is_admin = get_authenticated_user(data)
+        if not user or not user_id:
+            return jsonify({"error": "Доступ запрещен"}), 403
+
+        sync_req_id = data.get("sync_req_id")
+        chat_id_raw = data.get("chat_id")
+        target_uid_raw = data.get("target_user_id")
+        team_name = data.get("team_name", "Команда")
+
+        if not sync_req_id or not chat_id_raw or not target_uid_raw:
+            return jsonify({"error": "Недостаточно параметров"}), 400
+
+        try:
+            chat_id = int(chat_id_raw)
+            target_uid = int(target_uid_raw)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Некорректный ID чата или пользователя"}), 400
+
+        reg = datastore.get_team_registration(chat_id, sync_req_id)
+        if not reg:
+            return jsonify({"error": "Турнир не найден"}), 404
+
+        stored_role = datastore.get_user_test_role(user_id) if is_admin else None
+        is_rep = bool(is_admin or datastore.is_user_representative(reg, user_id) or stored_role in ("admin", "rep", "representative"))
+        if not is_rep:
+            return jsonify({"error": "Действие доступно только представителям турнира"}), 403
+
+        tourn_name = reg.get("tourn_name", "турнир")
+        pm_msg = (
+            f"⏰ <b>Напоминание от представителя площадки!</b>\n\n"
+            f"Представитель площадки запрашивает состав команды <b>\"{team_name}\"</b> на турнир <b>\"{tourn_name}\"</b>.\n\n"
+            f"Пожалуйста, откройте кнопку <b>«Составы»</b> или отправьте /roster в этот личный чат с ботом для сдачи состава."
+        )
+        res = telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
+        if res and res.ok:
+            return jsonify({"ok": True, "sent": True})
+        else:
+            return jsonify({"ok": False, "error": "Не удалось отправить сообщение пользователю"}), 400
+    except Exception as exc:
+        print(f"Error in api_miniapp_remind_roster: {exc}")
+        return jsonify({"error": f"Ошибка отправки напоминания: {exc}"}), 500
 
 
 @app.route("/api/miniapp/candidates", methods=["GET"])

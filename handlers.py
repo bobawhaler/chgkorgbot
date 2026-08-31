@@ -219,9 +219,19 @@ def system_tic_handler():
         if not helpers.get_chat_collect_rosters(reg_chat_id):
             continue
         start_ts = helpers.get_registration_start_ts(reg)
-        if start_ts and now_ts < start_ts:
-            # Tournament has not started yet! Do not send any reminders before start_ts.
-            continue
+        if start_ts:
+            if now_ts < start_ts:
+                # Tournament has not started yet! Do not send any reminders before start_ts.
+                continue
+            if now_ts - start_ts > 86400 * 2:
+                # Tournament already passed (started more than 48 hours ago). Do not send automated reminders.
+                continue
+        else:
+            created_at = reg.get("created_at")
+            created_ts = int(created_at.timestamp()) if (created_at and hasattr(created_at, "timestamp")) else 0
+            if created_ts and (now_ts - created_ts > 86400 * 2):
+                # Registration is older than 48 hours. Do not send automated reminders.
+                continue
 
         teams = reg.get("teams", [])
         updated_teams = False
