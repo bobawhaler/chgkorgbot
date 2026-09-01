@@ -176,6 +176,32 @@ def get_chat_config(chat_id):
     datastore_client = get_datastore_client()
     return datastore_client.get(datastore_client.key("ChatConfig", str(chat_id)))
 
+def get_gemini_active_model():
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("BotConfig", "gemini_model")
+        entity = datastore_client.get(key)
+        if entity and "model" in entity:
+            return entity["model"]
+    except Exception as e:
+        print(f"Error reading gemini model from datastore: {e}")
+    return None
+
+def set_gemini_active_model(model_name):
+    if not model_name:
+        return
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("BotConfig", "gemini_model")
+        entity = datastore.Entity(key=key)
+        entity.update({
+            "model": model_name,
+            "updated_at": datetime.datetime.now(pytz.utc),
+        })
+        datastore_client.put(entity)
+    except Exception as e:
+        print(f"Error saving gemini model to datastore: {e}")
+
 def get_played_tourns(venue_id, chat_id):
     import rating_api
     from helpers import normalize_tourn_name
