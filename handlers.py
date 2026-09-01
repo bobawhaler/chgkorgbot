@@ -1581,17 +1581,6 @@ def command_handler(body):
                             )
                             telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
                             telegram_api.set_message_reaction(chat_id, body["message"]["message_id"], "❤️")
-                            
-                            if collect_rosters:
-                                bot_username = helpers.get_bot_username()
-                                link = f"https://t.me/{bot_username}?start=roster_{reg.get('sync_req_id')}_{chat_id}"
-                                telegram_api.send_message(
-                                    chat_id,
-                                    thread_id,
-                                    f'Как только будет известен состав — его можно указать <a href="{link}">по ссылке</a> в ЛС с ботом.',
-                                    formatted=True,
-                                    reply_to_message_id=body["message"]["message_id"],
-                                )
                     return ""
 
             cmd = inp[0].split("@")[0].lower()
