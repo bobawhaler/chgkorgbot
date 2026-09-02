@@ -172,23 +172,13 @@ def api_miniapp_init():
                 for reg in all_active:
                     r_cid = reg.get("chat_id")
                     teams = reg.get("teams", [])
-                    user_teams = [t for t in teams if t.get("user_id") == user_id]
-                    if user_teams:
-                        for ut in user_teams:
-                            raw_regs.append({
-                                "sync_req_id": reg.get("sync_req_id"),
-                                "chat_id": r_cid,
-                                "tourn_name": reg.get("tourn_name"),
-                                "is_representative": False,
-                                "teams": [ut]
-                            })
-                    elif teams:
+                    if teams:
                         raw_regs.append({
                             "sync_req_id": reg.get("sync_req_id"),
                             "chat_id": r_cid,
                             "tourn_name": reg.get("tourn_name"),
                             "is_representative": False,
-                            "teams": [teams[0]]
+                            "teams": teams
                         })
                     else:
                         raw_regs.append({
@@ -559,6 +549,7 @@ def api_miniapp_candidates():
     reg_name = request.args.get("registered_name", "")
     user_id_raw = request.args.get("user_id")
     chat_id_raw = request.args.get("chat_id")
+    target_uid_raw = request.args.get("target_user_id")
     init_data = request.args.get("initData", "")
     
     user, user_id, is_admin = get_authenticated_user({"initData": init_data, "user_id": user_id_raw})
@@ -566,6 +557,7 @@ def api_miniapp_candidates():
     if not user or not user_id:
         return jsonify({"error": "Доступ запрещен"}), 403
 
+    effective_uid = int(target_uid_raw) if target_uid_raw and str(target_uid_raw).isdigit() else user_id
     team_id = int(team_id_raw) if team_id_raw and team_id_raw.isdigit() and int(team_id_raw) > 0 else None
     chat_id = int(chat_id_raw) if chat_id_raw and (chat_id_raw.isdigit() or (chat_id_raw.startswith("-") and chat_id_raw[1:].isdigit())) else None
 
@@ -575,13 +567,13 @@ def api_miniapp_candidates():
         if cfg and "venues" in cfg:
             venue_ids = list(cfg["venues"])
 
-    candidates = helpers.get_roster_candidates(user_id, team_id, chat_id=chat_id)
+    candidates = helpers.get_roster_candidates(effective_uid, team_id, chat_id=chat_id)
     display_names = datastore.get_team_suggested_display_names(
         team_id=team_id,
         base_team_name=base_name,
         registered_name=reg_name,
         venue_ids=venue_ids,
-        user_id=user_id
+        user_id=effective_uid
     )
     return jsonify({"candidates": candidates, "display_names": display_names})
 
@@ -669,49 +661,68 @@ def api_miniapp_save_roster():
     town = data.get("town", "")
     rating_team_id = data.get("rating_team_id")
     roster = data.get("roster", [])
+    team_index = data.get("team_index")
+    target_user_id = data.get("target_user_id")
+    registered_name = data.get("registered_name")
 
-    if chat_id and sync_req_id:
-        datastore.update_team_roster_in_ds(
-            chat_id, sync_req_id, user_id, rating_team_id, team_name, display_name, roster, town=town
-        )
-        datastore.add_user_history_team(user_id, rating_team_id, team_name, town=town, display_name=display_name)
-        for p in roster:
-            if p.get("name") or p.get("surname"):
-                datastore.add_user_history_player(
-                    user_id, p.get("player_id"), p.get("name", ""), p.get("surname", ""), patronymic=p.get("patronymic", "")
-                )
+    if not chat_id or not sync_req_id:
+        return jsonify({"error": "Не указан ID чата или турнира"}), 400
 
-        team_info = f"Команда: <b>{display_name}</b>"
-        if rating_team_id:
-            team_info += f" (Рейтинг ID: {rating_team_id})"
-        town_info = f"Город: <b>{town}</b>" if town else "Город: <i>не указан</i>"
+    updated_entity = datastore.update_team_roster_in_ds(
+        chat_id,
+        sync_req_id,
+        user_id,
+        rating_team_id,
+        team_name,
+        display_name,
+        roster,
+        town=town,
+        team_index=team_index,
+        target_user_id=target_user_id,
+        registered_name=registered_name
+    )
 
-        lines = [
-            f"✅ <b>Состав команды «{display_name}» сохранен через Mini App!</b>\n",
-            team_info,
-            town_info,
-            "",
-            "<b>Состав:</b>"
-        ]
-        status_symbols = {"K": "👑 [К]", "B": "🛡 [Б]", "L": "⚔️ [Л]"}
-        if not roster:
-            lines.append("<i>(состав пуст)</i>")
-        else:
-            for idx, p in enumerate(roster, 1):
-                st = status_symbols.get(p.get("status", "B"), "🛡 [Б]")
-                pid_str = f" (ID: {p['player_id']})" if p.get("player_id") else " (без ID)"
-                p_name = f"{p.get('name', '')} {p.get('surname', '')}".strip() or p.get("display_name", "Игрок")
-                lines.append(f"{idx}. {st} {p_name}{pid_str}")
+    if not updated_entity:
+        return jsonify({"error": "Не удалось сохранить состав в базе данных. Проверьте регистрацию на турнир."}), 500
 
-        saved_text = "\n".join(lines)
-        webapp_btn = {"text": "📱 Открыть Mini App составов", "web_app": {"url": helpers.get_webapp_url()}}
-        telegram_api.send_message(
-            user_id,
-            None,
-            saved_text,
-            formatted=True,
-            reply_markup={"inline_keyboard": [[webapp_btn]]}
-        )
+    datastore.add_user_history_team(user_id, rating_team_id, team_name, town=town, display_name=display_name)
+    for p in roster:
+        if p.get("name") or p.get("surname"):
+            datastore.add_user_history_player(
+                user_id, p.get("player_id"), p.get("name", ""), p.get("surname", ""), patronymic=p.get("patronymic", "")
+            )
+
+    team_info = f"Команда: <b>{display_name}</b>"
+    if rating_team_id:
+        team_info += f" (Рейтинг ID: {rating_team_id})"
+    town_info = f"Город: <b>{town}</b>" if town else "Город: <i>не указан</i>"
+
+    lines = [
+        f"✅ <b>Состав команды «{display_name}» сохранен через Mini App!</b>\n",
+        team_info,
+        town_info,
+        "",
+        "<b>Состав:</b>"
+    ]
+    status_symbols = {"K": "👑 [К]", "B": "🛡 [Б]", "L": "⚔️ [Л]"}
+    if not roster:
+        lines.append("<i>(состав пуст)</i>")
+    else:
+        for idx, p in enumerate(roster, 1):
+            st = status_symbols.get(p.get("status", "B"), "🛡 [Б]")
+            pid_str = f" (ID: {p['player_id']})" if p.get("player_id") else " (без ID)"
+            p_name = f"{p.get('name', '')} {p.get('surname', '')}".strip() or p.get("display_name", "Игрок")
+            lines.append(f"{idx}. {st} {p_name}{pid_str}")
+
+    saved_text = "\n".join(lines)
+    webapp_btn = {"text": "📱 Открыть Mini App составов", "web_app": {"url": helpers.get_webapp_url()}}
+    telegram_api.send_message(
+        user_id,
+        None,
+        saved_text,
+        formatted=True,
+        reply_markup={"inline_keyboard": [[webapp_btn]]}
+    )
 
     return jsonify({"ok": True})
 

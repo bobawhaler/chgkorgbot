@@ -702,28 +702,106 @@ def get_user_active_registrations(user_id):
     return _sort_registrations_newest_first(active_regs)
 
 
-def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team_name, display_name, roster, town=None):
+def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team_name, display_name, roster, town=None, team_index=None, target_user_id=None, registered_name=None):
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
     with datastore_client.transaction():
         entity = datastore_client.get(key)
         if not entity:
-            return None
+            query = datastore_client.query(kind="TeamRegistration")
+            query.add_filter(filter=PropertyFilter("sync_req_id", "=", str(sync_req_id)))
+            regs = list(query.fetch(limit=10))
+            for r in regs:
+                if str(r.get("chat_id")) == str(chat_id):
+                    entity = r
+                    break
+            if not entity:
+                return None
+
         teams = list(entity.get("teams", []))
-        for team in teams:
-            if team.get("user_id") == user_id:
-                if rating_team_id is not None:
-                    team["rating_team_id"] = rating_team_id
-                if team_name:
-                    team["team_name"] = team_name
-                if display_name:
-                    team["display_name"] = display_name
-                if town:
-                    team["town"] = town
-                team["roster"] = roster
-                team["roster_submitted"] = True if roster else False
-                team["submitted_at"] = datetime.datetime.now(pytz.utc).isoformat()
-                break
+        matched_idx = None
+
+        # 1. Primary: match by team_index if provided and in bounds
+        t_idx = None
+        if team_index is not None:
+            try:
+                t_idx = int(team_index)
+            except (ValueError, TypeError):
+                t_idx = None
+        
+        if t_idx is not None and 0 <= t_idx < len(teams):
+            matched_idx = t_idx
+
+        # 2. Match by target_user_id (if team was registered by a specific user)
+        if matched_idx is None and target_user_id:
+            try:
+                t_uid = int(target_user_id)
+            except (ValueError, TypeError):
+                t_uid = target_user_id
+            for idx, team in enumerate(teams):
+                if team.get("user_id") == t_uid:
+                    matched_idx = idx
+                    break
+
+        # 3. Match by original registered_name
+        if matched_idx is None and registered_name:
+            for idx, team in enumerate(teams):
+                t_n = team.get("team_name")
+                t_d = team.get("display_name")
+                if t_n == registered_name or t_d == registered_name:
+                    matched_idx = idx
+                    break
+
+        # 4. Match by display_name or team_name
+        if matched_idx is None and (display_name or team_name):
+            for idx, team in enumerate(teams):
+                t_n = team.get("team_name")
+                t_d = team.get("display_name")
+                if (display_name and (t_d == display_name or t_n == display_name)) or (team_name and (t_n == team_name or t_d == team_name)):
+                    matched_idx = idx
+                    break
+
+        # 5. Match by rating_team_id
+        if matched_idx is None and rating_team_id:
+            for idx, team in enumerate(teams):
+                if team.get("rating_team_id") == rating_team_id:
+                    matched_idx = idx
+                    break
+
+        # 6. Fallback for player role editing own team
+        if matched_idx is None and user_id:
+            for idx, team in enumerate(teams):
+                if team.get("user_id") == user_id:
+                    matched_idx = idx
+                    break
+
+        if matched_idx is not None and 0 <= matched_idx < len(teams):
+            team = teams[matched_idx]
+            if rating_team_id is not None:
+                team["rating_team_id"] = rating_team_id
+            if team_name:
+                team["team_name"] = team_name
+            if display_name:
+                team["display_name"] = display_name
+            if town is not None:
+                team["town"] = town
+            team["roster"] = roster
+            team["roster_submitted"] = bool(roster and len(roster) > 0)
+            team["submitted_externally"] = False
+            team["submitted_at"] = datetime.datetime.now(pytz.utc).isoformat()
+        else:
+            teams.append({
+                "team_name": team_name or display_name or registered_name or "Команда",
+                "display_name": display_name or team_name or registered_name or "Команда",
+                "rating_team_id": rating_team_id,
+                "town": town or "",
+                "user_id": target_user_id or user_id,
+                "roster": roster,
+                "roster_submitted": bool(roster and len(roster) > 0),
+                "submitted_externally": False,
+                "submitted_at": datetime.datetime.now(pytz.utc).isoformat()
+            })
+
         entity["teams"] = teams
         datastore_client.put(entity)
         return entity

@@ -231,43 +231,25 @@
     }
 
     .btn-csv {
-      background: rgba(67, 160, 71, 0.12);
-      color: #2e7d32;
-      border: 1px solid rgba(67, 160, 71, 0.25);
-      padding: 8px 14px;
+      background: rgba(36, 129, 204, 0.1);
+      color: var(--link-color);
+      border: 1px solid rgba(36, 129, 204, 0.25);
+      padding: 9px 14px;
       border-radius: 9px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
+      width: 100%;
       transition: var(--transition);
       text-decoration: none;
     }
 
     .btn-csv:active {
-      transform: scale(0.97);
-      background: rgba(67, 160, 71, 0.22);
-    }
-
-    .btn-tg-send {
-      background: rgba(36, 129, 204, 0.1);
-      color: var(--link-color);
-      border: 1px solid rgba(36, 129, 204, 0.2);
-      padding: 8px 12px;
-      border-radius: 9px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      transition: var(--transition);
-    }
-
-    .btn-tg-send:active {
-      transform: scale(0.97);
+      transform: scale(0.98);
       background: rgba(36, 129, 204, 0.2);
     }
 
@@ -1086,7 +1068,7 @@
       try {
         tg.ready();
         tg.expand();
-        if (tg.enableClosingConfirmation) tg.enableClosingConfirmation();
+        if (tg.disableClosingConfirmation) tg.disableClosingConfirmation();
       } catch (e) {
         console.warn("Telegram WebApp init warning:", e);
       }
@@ -1299,9 +1281,9 @@
         if (!hasTournaments) {
           let emptyText = "Нет активных турниров с включенным сбором составов.<br>Зарегистрируйте команду в чате, где включен сбор составов.";
           if (appData.activeTestRole === "guest") {
-            emptyText = "В роли гостя турниры и команды не отображаются.<br>Переключитесь на роль «Команда», «Представитель» или «Админ».";
+            emptyText = "В роли гостя турниры и команды не отображаются.<br>Переключитесь на роль «Представитель команды», «Представитель площадки» или «Админ».";
           } else if (appData.activeTestRole === "player") {
-            emptyText = "Нет зарегистрированных команд для вашего аккаунта.<br>Зарегистрируйте команду в чате турнира.";
+            emptyText = "Нет зарегистрированных команд.<br>Зарегистрируйте команду в чате турнира.";
           }
           container.innerHTML = `
             <div class="empty-state">
@@ -1312,7 +1294,9 @@
           return;
         }
 
-        const isRepView = appData.activeTestRole in { "admin": 1, "rep": 1, "representative": 1 } || appData.tournaments.some(t => t.is_representative);
+        const isRepView = (appData.activeTestRole === "player" || appData.activeTestRole === "guest")
+          ? false
+          : ((appData.activeTestRole in { "admin": 1, "rep": 1, "representative": 1 }) || appData.tournaments.some(t => t.is_representative));
 
         let html = "";
         if (isRepView) {
@@ -1409,11 +1393,8 @@
                   ${statsBadge}
                 </div>
                 <div class="tourn-actions-bar">
-                  <button class="btn-csv" onclick="downloadTournamentCsv('${tourn.sync_req_id}', '${tourn.chat_id}', '${escapeQuotes(tourn.tourn_name)}')">
-                    <span>📥 Скачать CSV для рейтинга</span>
-                  </button>
-                  <button class="btn-tg-send" onclick="sendTournamentCsvToTg('${tourn.sync_req_id}', '${tourn.chat_id}')">
-                    <span>✉️ В Telegram</span>
+                  <button class="btn-csv" onclick="sendTournamentCsvToTg('${tourn.sync_req_id}', '${tourn.chat_id}')">
+                    <span>✉️ Отправить CSV файл для рейтинга в Telegram</span>
                   </button>
                 </div>
                 <div style="font-size: 12px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin: 10px 0 6px 0; letter-spacing: 0.3px;">
@@ -1478,11 +1459,13 @@
     function selectTournamentTeam(tournIndex, teamIndex) {
       const tourn = appData.tournaments[tournIndex];
       const team = tourn ? (tourn.teams[teamIndex] || {}) : {};
+      appData.currentTeamIndex = teamIndex;
       setupRosterEditor(tourn, team);
     }
 
     function selectRegistration(index) {
       const reg = appData.registrations[index];
+      appData.currentTeamIndex = null;
       setupRosterEditor(reg, reg ? reg.team : {});
     }
 
@@ -1492,6 +1475,7 @@
       appData.currentReg = tourn;
       appData.currentChatId = tourn?.chat_id || "";
       appData.currentTeamRef = team;
+      appData.currentTargetUserId = team?.user_id || null;
 
       const roster = team.roster || [];
       appData.currentRoster = JSON.parse(JSON.stringify(roster));
@@ -1537,47 +1521,6 @@
       }
     }
 
-    async function downloadTournamentCsv(syncReqId, chatId, tournName) {
-      haptic("impact", "medium");
-      try {
-        showToast("Формирование CSV файла...");
-        const initDataRaw = tg?.initData || "";
-        const unsafeUser = tg?.initDataUnsafe?.user;
-        const uid = appData.user?.id || unsafeUser?.id || "";
-
-        const params = new URLSearchParams({
-          sync_req_id: syncReqId,
-          chat_id: chatId,
-          user_id: uid,
-          initData: initDataRaw
-        });
-
-        const resp = await fetch(`/api/miniapp/export_csv?${params.toString()}`);
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          throw new Error(err.error || "Ошибка скачивания CSV");
-        }
-
-        const blob = await resp.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.style.display = "none";
-        a.href = url;
-        const safeName = (tournName || "roster").replace(/[^a-zA-Z0-9а-яА-ЯёЁ_-]/g, "_");
-        a.download = `roster_${syncReqId}_${safeName}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-
-        haptic("notification", "success");
-        showToast("📥 CSV файл успешно скачан!");
-      } catch (err) {
-        console.error("CSV download error:", err);
-        haptic("notification", "error");
-        alert("Не удалось скачать CSV: " + err.message);
-      }
-    }
 
     async function sendTournamentCsvToTg(syncReqId, chatId) {
       haptic("impact", "medium");
@@ -1794,6 +1737,9 @@
 
     function navigateBack() {
       haptic("selection");
+      if (tg?.disableClosingConfirmation) {
+        try { tg.disableClosingConfirmation(); } catch (e) {}
+      }
       document.getElementById("screenRoster").classList.remove("active");
       document.getElementById("screenTournaments").classList.add("active");
       document.getElementById("bottomBar").style.display = "none";
@@ -1831,7 +1777,9 @@
         // Representative Actions Box
         const repBox = document.getElementById("repRosterActionBox");
         const repButtons = document.getElementById("repRosterActionButtons");
-        const isRep = (appData.activeTestRole in { "admin": 1, "rep": 1, "representative": 1 }) || appData.currentTourn?.is_representative;
+        const isRep = (appData.activeTestRole === "player" || appData.activeTestRole === "guest")
+          ? false
+          : ((appData.activeTestRole in { "admin": 1, "rep": 1, "representative": 1 }) || Boolean(appData.currentTourn?.is_representative));
 
         if (repBox && repButtons) {
           if (isRep && appData.currentTeamRef) {
@@ -1877,7 +1825,6 @@
     }
 
     function renderRosterList() {
-      const container = document.getElementById("rosterList");
       const countEl = document.getElementById("rosterCount");
       if (countEl) countEl.innerText = appData.currentRoster.length;
 
@@ -1886,6 +1833,7 @@
         loadingEl.style.display = appData.isRecalculatingStatuses ? "inline-flex" : "none";
       }
 
+      const container = document.getElementById("rosterList");
       if (!container) return;
 
       if (!appData.currentRoster || appData.currentRoster.length === 0) {
@@ -1956,7 +1904,7 @@
 
       const unsafeUser = tg?.initDataUnsafe?.user;
       const uid = appData.user?.id || unsafeUser?.id || "";
-      const cacheKey = `${appData.currentRatingTeamId || 0}_${appData.currentChatId || 0}_${uid}_${appData.currentTeamName || ""}`;
+      const cacheKey = `${appData.currentRatingTeamId || 0}_${appData.currentChatId || 0}_${uid}_${appData.currentTargetUserId || 0}_${appData.currentTeamName || ""}`;
 
       if (!forceRefresh && appData.candidatesCache && appData.candidatesCache[cacheKey]) {
         const cached = appData.candidatesCache[cacheKey];
@@ -1978,7 +1926,8 @@
           base_name: appData.currentTeamName || "",
           registered_name: registeredName,
           chat_id: appData.currentChatId || "",
-          user_id: uid
+          user_id: uid,
+          target_user_id: appData.currentTargetUserId || ""
         });
 
         const resp = await fetch(`/api/miniapp/candidates?${params.toString()}`);
@@ -2601,11 +2550,15 @@
           user_id: unsafeUser?.id || null,
           sync_req_id: appData.currentReg?.sync_req_id,
           chat_id: appData.currentReg?.chat_id,
-          team_name: appData.currentTeamName,
-          display_name: appData.currentDisplayName,
+          team_name: appData.currentTeamName || appData.registeredTeamName,
+          display_name: appData.currentDisplayName || appData.currentTeamName || appData.registeredTeamName,
+          registered_name: appData.registeredTeamName || "",
           town: appData.currentTown,
           rating_team_id: appData.currentRatingTeamId,
-          roster: appData.currentRoster
+          roster: appData.currentRoster,
+          team_index: appData.currentTeamIndex,
+          target_user_id: appData.currentTargetUserId || null,
+          test_role: appData.activeTestRole || ""
         };
 
         const resp = await fetch("/api/miniapp/save_roster", {
@@ -2622,22 +2575,28 @@
         haptic("notification", "success");
         showToast("✅ Состав успешно сохранен!");
 
+        if (tg?.disableClosingConfirmation) {
+          try { tg.disableClosingConfirmation(); } catch (e) {}
+        }
+
         if (appData.currentTeamRef) {
-          appData.currentTeamRef.team_name = appData.currentTeamName;
-          appData.currentTeamRef.display_name = appData.currentDisplayName;
+          appData.currentTeamRef.team_name = appData.currentTeamName || appData.registeredTeamName;
+          appData.currentTeamRef.display_name = appData.currentDisplayName || appData.currentTeamName || appData.registeredTeamName;
           appData.currentTeamRef.town = appData.currentTown;
           appData.currentTeamRef.rating_team_id = appData.currentRatingTeamId;
           appData.currentTeamRef.roster = appData.currentRoster;
           appData.currentTeamRef.roster_submitted = true;
+          appData.currentTeamRef.submitted_externally = false;
         }
 
         if (appData.currentReg && appData.currentReg.team) {
-          appData.currentReg.team.team_name = appData.currentTeamName;
-          appData.currentReg.team.display_name = appData.currentDisplayName;
+          appData.currentReg.team.team_name = appData.currentTeamName || appData.registeredTeamName;
+          appData.currentReg.team.display_name = appData.currentDisplayName || appData.currentTeamName || appData.registeredTeamName;
           appData.currentReg.team.town = appData.currentTown;
           appData.currentReg.team.rating_team_id = appData.currentRatingTeamId;
           appData.currentReg.team.roster = appData.currentRoster;
           appData.currentReg.team.roster_submitted = true;
+          appData.currentReg.team.submitted_externally = false;
         }
 
         setTimeout(() => {
