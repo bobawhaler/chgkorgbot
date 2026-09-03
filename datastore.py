@@ -1237,6 +1237,68 @@ def set_user_test_role(user_id, role):
         print(f"Error setting test role for user {user_id}: {e}")
 
 
+# --- User Bot Status (Interaction / Start Tracking) ---
+
+def has_user_started_bot(user_id):
+    if not user_id:
+        return False
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("UserBotStatus", str(user_id))
+        entity = datastore_client.get(key)
+        if entity:
+            return bool(entity.get("started", False))
+        
+        # Fallback check: if user has a UserMapping or UserState, they have used the bot
+        mapping_key = datastore_client.key("UserMapping", str(user_id))
+        if datastore_client.get(mapping_key):
+            # Cache the status in UserBotStatus
+            mark_user_bot_started(user_id)
+            return True
+        state_key = datastore_client.key("UserState", str(user_id))
+        if datastore_client.get(state_key):
+            mark_user_bot_started(user_id)
+            return True
+    except Exception as e:
+        print(f"Error checking UserBotStatus for user_id={user_id}: {e}")
+    return False
+
+
+def mark_user_bot_started(user_id, username=""):
+    if not user_id:
+        return
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("UserBotStatus", str(user_id))
+        entity = datastore_client.get(key) or datastore.Entity(key=key)
+        entity.update({
+            "user_id": int(user_id),
+            "started": True,
+            "username": username or entity.get("username", ""),
+            "updated_at": datetime.datetime.now(pytz.utc),
+        })
+        datastore_client.put(entity)
+    except Exception as e:
+        print(f"Error saving UserBotStatus (started) for user_id={user_id}: {e}")
+
+
+def mark_user_bot_blocked(user_id):
+    if not user_id:
+        return
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("UserBotStatus", str(user_id))
+        entity = datastore_client.get(key) or datastore.Entity(key=key)
+        entity.update({
+            "user_id": int(user_id),
+            "started": False,
+            "updated_at": datetime.datetime.now(pytz.utc),
+        })
+        datastore_client.put(entity)
+    except Exception as e:
+        print(f"Error saving UserBotStatus (blocked) for user_id={user_id}: {e}")
+
+
 # --- Venue Data & Sync State Persistence ---
 
 def get_venue_sync_state(venue_id):

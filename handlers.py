@@ -264,6 +264,10 @@ def system_tic_handler():
                         f"Откройте приложение по кнопке <b>«Составы»</b> внизу экрана или отправьте /roster в этот личный чат с ботом."
                     )
                     pm_res = telegram_api.send_message(user_id, None, msg_text, formatted=True)
+                    if pm_res and pm_res.ok:
+                        datastore.mark_user_bot_started(user_id)
+                    elif pm_res and pm_res.status_code == 403:
+                        datastore.mark_user_bot_blocked(user_id)
                     t["reminders_count"] = rem_count + 1
                     t["last_reminder_ts"] = now_ts
                     updated_teams = True
@@ -540,6 +544,7 @@ def handle_callback_query(cq):
     else:
         telegram_api.answer_callback_query(cq_id)
 
+    datastore.mark_user_bot_started(user_id, username=username)
     telegram_api.send_chat_action(chat_id, "typing")
 
     state_name, context_data = datastore.get_user_state(user_id)
@@ -920,8 +925,15 @@ def handle_callback_query(cq):
                 f"Представитель площадки запрашивает состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b>.\n\n"
                 f"Пожалуйста, откройте приложение по кнопке <b>«Составы»</b> внизу экрана или отправьте /roster в этот личный чат с ботом для указания состава."
             )
-            telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
-            telegram_api.answer_callback_query(cq_id, text=f"🔔 Напоминание отправлено капитану команды «{tname_str}»!", show_alert=True)
+            resp = telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
+            if resp and resp.ok:
+                datastore.mark_user_bot_started(target_uid)
+                telegram_api.answer_callback_query(cq_id, text=f"🔔 Напоминание отправлено капитану команды «{tname_str}»!", show_alert=True)
+            elif resp and resp.status_code == 403:
+                datastore.mark_user_bot_blocked(target_uid)
+                telegram_api.answer_callback_query(cq_id, text=f"⚠️ Капитан команды «{tname_str}» еще не запустил бота в ЛС!", show_alert=True)
+            else:
+                telegram_api.answer_callback_query(cq_id, text=f"🔔 Напоминание отправлено капитану команды «{tname_str}»!", show_alert=True)
 
 
 def handle_export_roster(chat_id, thread_id=None):
@@ -981,10 +993,14 @@ def handle_export_roster(chat_id, thread_id=None):
                 u_disp = f"@{t['username']}" if t.get("username") else f"ID {t.get('user_id')}"
                 r_list = t.get("roster", [])
                 p_count = len(r_list)
+                uid = t.get("user_id")
                 
                 if t.get("roster_submitted") or p_count > 0:
                     st_icon = "🟢"
                     st_text = f"состав сдан ({p_count} чел.)"
+                elif uid and not datastore.has_user_started_bot(uid):
+                    st_icon = "⚠️"
+                    st_text = "бот не запущен в ЛС (состав не сдан)"
                 else:
                     st_icon = "🔴"
                     st_text = "состав НЕ сдан (0 чел.)"
@@ -1022,6 +1038,7 @@ def handle_private_message(body):
     chat_id = msg["chat"]["id"]
     user_id = msg["from"]["id"]
     text = msg.get("text", "").strip()
+    datastore.mark_user_bot_started(user_id, username=msg["from"].get("username", ""))
 
     state_name, context_data = datastore.get_user_state(user_id)
 
@@ -1581,6 +1598,22 @@ def command_handler(body):
                             )
                             telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
                             telegram_api.set_message_reaction(chat_id, body["message"]["message_id"], "❤️")
+
+                            if collect_rosters and user_id and not datastore.has_user_started_bot(user_id):
+                                bot_username = helpers.get_bot_username()
+                                link_url = f"https://t.me/{bot_username}?start=roster_{reg.get('sync_req_id')}_{chat_id}"
+                                user_mention = f"@{username}" if username else user_disp
+                                prompt_text = (
+                                    f"👋 {user_mention}, команда «<b>{team_name}</b>» зарегистрирована!\n"
+                                    f"Чтобы сдать состав команды перед турниром и получать напоминания, пожалуйста, <a href=\"{link_url}\">запустите бота</a>."
+                                )
+                                prompt_kb = {
+                                    "inline_keyboard": [[
+                                        {"text": "🤖 Запустить бота для сдачи состава", "url": link_url}
+                                    ]]
+                                }
+                                thread_id = body["message"].get("message_thread_id") or reg.get("thread_id")
+                                telegram_api.send_message(chat_id, thread_id, prompt_text, formatted=True, reply_markup=prompt_kb)
                     return ""
 
             cmd = inp[0].split("@")[0].lower()

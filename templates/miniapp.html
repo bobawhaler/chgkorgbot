@@ -1326,6 +1326,8 @@
                 subBadge = `<span class="badge badge-success" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128994; Сдан${countNote}</span>`;
               } else if (hasRoster && !isSub) {
                 subBadge = `<span class="badge badge-warning" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128993; На доработке</span>`;
+              } else if (t.bot_started === false) {
+                subBadge = `<span class="badge" style="background: rgba(255, 152, 0, 0.15); color: #e65100; font-size: 11px; padding: 3px 8px; white-space: nowrap;">⚠️ Бот не запущен</span>`;
               } else {
                 subBadge = `<span class="badge badge-danger" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128308; Не сдан</span>`;
               }

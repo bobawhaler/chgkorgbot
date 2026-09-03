@@ -142,6 +142,11 @@ def api_miniapp_init():
             return jsonify({"error": "Доступ запрещен. Не удалось авторизовать пользователя Telegram."}), 403
 
         try:
+            datastore.mark_user_bot_started(user_id, username=user.get("username", "") if isinstance(user, dict) else "")
+        except Exception as e:
+            print(f"Error marking user bot started: {e}")
+
+        try:
             user_mapping = datastore.get_user_mapping(user_id) if user_id else None
         except Exception as e:
             print(f"Error fetching user_mapping: {e}")
@@ -288,6 +293,11 @@ def api_miniapp_init():
                     is_sub = bool(t.get("roster_submitted") or (t.get("roster") and len(t.get("roster")) > 0) or t.get("submitted_externally"))
                     if t.get("roster_submitted") is False and not t.get("submitted_externally"):
                         is_sub = False
+                    team_uid = t.get("user_id")
+                    team_bot_started = True
+                    if team_uid:
+                        team_bot_started = bool(datastore.has_user_started_bot(team_uid))
+
                     team_dict = {
                         "team_name": t.get("team_name", "Команда"),
                         "display_name": t.get("display_name", t.get("team_name", "Команда")),
@@ -296,8 +306,9 @@ def api_miniapp_init():
                         "roster": list(t.get("roster", [])),
                         "roster_submitted": is_sub,
                         "submitted_externally": bool(t.get("submitted_externally")),
-                        "user_id": t.get("user_id"),
-                        "username": t.get("username", "")
+                        "user_id": team_uid,
+                        "username": t.get("username", ""),
+                        "bot_started": team_bot_started,
                     }
                     teams_list.append(team_dict)
                     registrations.append({
@@ -715,7 +726,7 @@ def api_miniapp_save_roster():
             lines.append(f"{idx}. {st} {p_name}{pid_str}")
 
     saved_text = "\n".join(lines)
-    webapp_btn = {"text": "📱 Открыть Mini App составов", "web_app": {"url": helpers.get_webapp_url()}}
+    webapp_btn = {"text": "✏️ Редактировать состав", "web_app": {"url": helpers.get_webapp_url()}}
     telegram_api.send_message(
         user_id,
         None,
