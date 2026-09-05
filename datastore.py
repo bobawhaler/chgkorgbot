@@ -702,7 +702,7 @@ def get_user_active_registrations(user_id):
     return _sort_registrations_newest_first(active_regs)
 
 
-def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team_name, display_name, roster, town=None, team_index=None, target_user_id=None, registered_name=None):
+def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team_name, display_name, roster, town=None, team_index=None, target_user_id=None, registered_name=None, is_rep=False):
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
     with datastore_client.transaction():
@@ -720,60 +720,100 @@ def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team
 
         teams = list(entity.get("teams", []))
         matched_idx = None
+        user_is_representative = is_rep or is_user_representative(entity, user_id)
 
-        # 1. Primary: match by team_index if provided and in bounds
-        t_idx = None
-        if team_index is not None:
-            try:
-                t_idx = int(team_index)
-            except (ValueError, TypeError):
-                t_idx = None
-        
-        if t_idx is not None and 0 <= t_idx < len(teams):
-            matched_idx = t_idx
+        if not user_is_representative:
+            # NON-REPRESENTATIVE (Player / Team Captain):
+            # MUST strictly match a team where team['user_id'] == user_id
+            user_team_indices = [i for i, t in enumerate(teams) if t.get("user_id") == user_id]
+            if not user_team_indices:
+                print(f"[SECURITY] User {user_id} attempted to edit team in tournament {sync_req_id} without having a registered team")
+                return None
 
-        # 2. Match by target_user_id (if team was registered by a specific user)
-        if matched_idx is None and target_user_id:
-            try:
-                t_uid = int(target_user_id)
-            except (ValueError, TypeError):
-                t_uid = target_user_id
-            for idx, team in enumerate(teams):
-                if team.get("user_id") == t_uid:
-                    matched_idx = idx
-                    break
+            # 1. Match by original registered_name among user's teams
+            if registered_name:
+                for i in user_team_indices:
+                    t = teams[i]
+                    if t.get("team_name") == registered_name or t.get("display_name") == registered_name:
+                        matched_idx = i
+                        break
 
-        # 3. Match by original registered_name
-        if matched_idx is None and registered_name:
-            for idx, team in enumerate(teams):
-                t_n = team.get("team_name")
-                t_d = team.get("display_name")
-                if t_n == registered_name or t_d == registered_name:
-                    matched_idx = idx
-                    break
+            # 2. Match by display_name or team_name among user's teams
+            if matched_idx is None and (display_name or team_name):
+                for i in user_team_indices:
+                    t = teams[i]
+                    t_n = t.get("team_name")
+                    t_d = t.get("display_name")
+                    if (display_name and (t_d == display_name or t_n == display_name)) or (team_name and (t_n == team_name or t_d == team_name)):
+                        matched_idx = i
+                        break
 
-        # 4. Match by display_name or team_name
-        if matched_idx is None and (display_name or team_name):
-            for idx, team in enumerate(teams):
-                t_n = team.get("team_name")
-                t_d = team.get("display_name")
-                if (display_name and (t_d == display_name or t_n == display_name)) or (team_name and (t_n == team_name or t_d == team_name)):
-                    matched_idx = idx
-                    break
+            # 3. Match by rating_team_id among user's teams
+            if matched_idx is None and rating_team_id:
+                for i in user_team_indices:
+                    if teams[i].get("rating_team_id") == rating_team_id:
+                        matched_idx = i
+                        break
 
-        # 5. Match by rating_team_id
-        if matched_idx is None and rating_team_id:
-            for idx, team in enumerate(teams):
-                if team.get("rating_team_id") == rating_team_id:
-                    matched_idx = idx
-                    break
+            # 4. Fallback: take the user's team
+            if matched_idx is None:
+                matched_idx = user_team_indices[0]
 
-        # 6. Fallback for player role editing own team
-        if matched_idx is None and user_id:
-            for idx, team in enumerate(teams):
-                if team.get("user_id") == user_id:
-                    matched_idx = idx
-                    break
+        else:
+            # REPRESENTATIVE / ADMIN:
+            # 1. Match by team_index if provided and in bounds
+            t_idx = None
+            if team_index is not None:
+                try:
+                    t_idx = int(team_index)
+                except (ValueError, TypeError):
+                    t_idx = None
+
+            if t_idx is not None and 0 <= t_idx < len(teams):
+                matched_idx = t_idx
+
+            # 2. Match by target_user_id (if team was registered by a specific user)
+            if matched_idx is None and target_user_id:
+                try:
+                    t_uid = int(target_user_id)
+                except (ValueError, TypeError):
+                    t_uid = target_user_id
+                for idx, team in enumerate(teams):
+                    if team.get("user_id") == t_uid:
+                        matched_idx = idx
+                        break
+
+            # 3. Match by original registered_name
+            if matched_idx is None and registered_name:
+                for idx, team in enumerate(teams):
+                    t_n = team.get("team_name")
+                    t_d = team.get("display_name")
+                    if t_n == registered_name or t_d == registered_name:
+                        matched_idx = idx
+                        break
+
+            # 4. Match by display_name or team_name
+            if matched_idx is None and (display_name or team_name):
+                for idx, team in enumerate(teams):
+                    t_n = team.get("team_name")
+                    t_d = team.get("display_name")
+                    if (display_name and (t_d == display_name or t_n == display_name)) or (team_name and (t_n == team_name or t_d == team_name)):
+                        matched_idx = idx
+                        break
+
+            # 5. Match by rating_team_id
+            if matched_idx is None and rating_team_id:
+                for idx, team in enumerate(teams):
+                    if team.get("rating_team_id") == rating_team_id:
+                        matched_idx = idx
+                        break
+
+            # 6. Fallback for representative editing own team
+            if matched_idx is None and user_id:
+                for idx, team in enumerate(teams):
+                    if team.get("user_id") == user_id:
+                        matched_idx = idx
+                        break
 
         if matched_idx is not None and 0 <= matched_idx < len(teams):
             team = teams[matched_idx]

@@ -1281,7 +1281,7 @@
         if (!hasTournaments) {
           let emptyText = "Нет активных турниров с включенным сбором составов.<br>Зарегистрируйте команду в чате, где включен сбор составов.";
           if (appData.activeTestRole === "guest") {
-            emptyText = "В роли гостя турниры и команды не отображаются.<br>Переключитесь на роль «Представитель команды», «Представитель площадки» или «Админ».";
+            emptyText = "В роли гостя турниры и команды не отображаются.<br>Переключитесь на роль «Команда», «Представитель» или «Админ».";
           } else if (appData.activeTestRole === "player") {
             emptyText = "Нет зарегистрированных команд.<br>Зарегистрируйте команду в чате турнира.";
           }
@@ -1563,7 +1563,7 @@
       if (!team) return;
 
       const teamName = team.display_name || team.team_name || "команды";
-      if (!confirm(`Вернуть состав команды «${teamName}» на доработку?\nКапитану будет отправлено уведомление в Telegram.`)) {
+      if (!confirm(`Вернуть состав команды «${teamName}» на доработку?\nПредставителю команды будет отправлено уведомление в Telegram.`)) {
         return;
       }
 
@@ -1664,12 +1664,12 @@
       if (!tourn) return;
       const team = (tourn.teams || [])[teamIndex];
       if (!team || !team.user_id) {
-        alert("У этой команды не указан контакт капитана в Telegram");
+        alert("У этой команды не указан контакт представителя в Telegram");
         return;
       }
 
       const teamName = team.display_name || team.team_name || "команды";
-      if (!confirm(`Отправить напоминание о сдаче состава капитану команды «${teamName}» в Telegram?`)) {
+      if (!confirm(`Отправить напоминание о сдаче состава представителю команды «${teamName}» в Telegram?`)) {
         return;
       }
 
@@ -1700,7 +1700,7 @@
         }
 
         haptic("notification", "success");
-        showToast(`🔔 Напоминание отправлено капитану «${teamName}»!`);
+        showToast(`🔔 Напоминание отправлено представителю «${teamName}»!`);
       } catch (err) {
         console.error("Remind error:", err);
         haptic("notification", "error");
@@ -1806,7 +1806,7 @@
               if (team.user_id) {
                 btns += `
                   <button class="btn btn-outline btn-sm" style="color: var(--link-color); border-color: rgba(36, 129, 204, 0.4); border-radius: 8px;" onclick="remindCurrentTeamRoster()">
-                    🔔 Напомнить капитану в Telegram
+                    🔔 Напомнить в Telegram
                   </button>
                 `;
               }

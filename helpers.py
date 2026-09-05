@@ -557,11 +557,11 @@ def format_team_registration_text(tourn_name, url, representative_text, narrator
         "",
         "📝 <b>Регистрация команд открыта!</b>",
         "<i>Ответьте (reply) на это сообщение названием вашей команды для регистрации.</i>",
-        "<i>Для отмены ответьте <code>/unregister</code> или <code>отмена</code>.</i>",
+        "<i>Для отмены ответьте <code>/unregister</code>.</i>",
     ]
     if include_roster_prompt:
         bot_username = get_bot_username()
-        lines.append(f'<i>Для сдачи состава перейдите <a href="https://t.me/{bot_username}?start=roster">в ЛС с ботом</a> и откройте приложение <b>«Составы»</b>.</i>')
+        lines.append(f'<i>Для сдачи состава через бота можно перейти <a href="https://t.me/{bot_username}?start=roster">в ЛС</a> и нажать кнопку «Составы».</i>')
     lines.extend([
         "",
         f"<b>Зарегистрированные команды ({len(teams)}):</b>",

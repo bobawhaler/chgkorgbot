@@ -177,14 +177,16 @@ def api_miniapp_init():
                 for reg in all_active:
                     r_cid = reg.get("chat_id")
                     teams = reg.get("teams", [])
-                    if teams:
-                        raw_regs.append({
-                            "sync_req_id": reg.get("sync_req_id"),
-                            "chat_id": r_cid,
-                            "tourn_name": reg.get("tourn_name"),
-                            "is_representative": False,
-                            "teams": teams
-                        })
+                    user_teams = [t for t in teams if t.get("user_id") == user_id]
+                    if user_teams:
+                        for ut in user_teams:
+                            raw_regs.append({
+                                "sync_req_id": reg.get("sync_req_id"),
+                                "chat_id": r_cid,
+                                "tourn_name": reg.get("tourn_name"),
+                                "is_representative": False,
+                                "teams": [ut]
+                            })
                     else:
                         raw_regs.append({
                             "sync_req_id": reg.get("sync_req_id"),
@@ -679,8 +681,35 @@ def api_miniapp_save_roster():
     if not chat_id or not sync_req_id:
         return jsonify({"error": "Не указан ID чата или турнира"}), 400
 
+    try:
+        chat_id_int = int(chat_id)
+    except (ValueError, TypeError):
+        return jsonify({"error": "Некорректный ID чата"}), 400
+
+    reg = datastore.get_team_registration(chat_id_int, sync_req_id)
+    if not reg:
+        return jsonify({"error": "Турнир не найден"}), 404
+
+    stored_role = datastore.get_user_test_role(user_id) if is_admin else None
+    if stored_role == "guest":
+        return jsonify({"error": "В роли гостя редактирование составов недоступно. Вы можете только привязать свой профиль рейтинга к Telegram."}), 403
+
+    is_rep = bool(is_admin or datastore.is_user_representative(reg, user_id) or stored_role in ("admin", "rep", "representative"))
+
+    if not is_rep:
+        # Player (Team Representative) role: can ONLY edit their own registered team
+        teams = reg.get("teams", [])
+        user_teams = [t for t in teams if t.get("user_id") == user_id]
+        if not user_teams:
+            return jsonify({"error": "Вам недоступно редактирование составов на этот турнир, так как вы не регистрировали команду."}), 403
+
+        # Force target_user_id to be user_id to prevent any spoofing
+        target_user_id = user_id
+        # For non-representatives, disallow client team_index to avoid hijacking other teams
+        team_index = None
+
     updated_entity = datastore.update_team_roster_in_ds(
-        chat_id,
+        chat_id_int,
         sync_req_id,
         user_id,
         rating_team_id,
@@ -690,7 +719,8 @@ def api_miniapp_save_roster():
         town=town,
         team_index=team_index,
         target_user_id=target_user_id,
-        registered_name=registered_name
+        registered_name=registered_name,
+        is_rep=is_rep
     )
 
     if not updated_entity:
@@ -726,13 +756,11 @@ def api_miniapp_save_roster():
             lines.append(f"{idx}. {st} {p_name}{pid_str}")
 
     saved_text = "\n".join(lines)
-    webapp_btn = {"text": "✏️ Редактировать состав", "web_app": {"url": helpers.get_webapp_url()}}
     telegram_api.send_message(
         user_id,
         None,
         saved_text,
-        formatted=True,
-        reply_markup={"inline_keyboard": [[webapp_btn]]}
+        formatted=True
     )
 
     return jsonify({"ok": True})
