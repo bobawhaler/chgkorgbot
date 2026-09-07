@@ -185,7 +185,8 @@ def api_miniapp_init():
                                 "chat_id": r_cid,
                                 "tourn_name": reg.get("tourn_name"),
                                 "is_representative": False,
-                                "teams": [ut]
+                                "teams": [ut],
+                                "all_teams": teams
                             })
                     else:
                         raw_regs.append({
@@ -201,7 +202,8 @@ def api_miniapp_init():
                                 "town": "Берлин",
                                 "roster": [],
                                 "roster_submitted": False
-                            }]
+                            }],
+                            "all_teams": teams
                         })
             except Exception as e:
                 print(f"Error in player role simulation: {e}")
@@ -212,12 +214,14 @@ def api_miniapp_init():
                 raw_regs = []
                 for reg in all_active:
                     r_cid = reg.get("chat_id")
+                    teams = reg.get("teams", [])
                     raw_regs.append({
                         "sync_req_id": reg.get("sync_req_id"),
                         "chat_id": r_cid,
                         "tourn_name": reg.get("tourn_name"),
                         "is_representative": True,
-                        "teams": reg.get("teams", [])
+                        "teams": teams,
+                        "all_teams": teams
                     })
             except Exception as e:
                 print(f"Error in rep role simulation: {e}")
@@ -227,6 +231,7 @@ def api_miniapp_init():
                 raw_regs = datastore.get_all_active_registrations()
                 for r in raw_regs:
                     r["is_representative"] = True
+                    r["all_teams"] = r.get("teams", [])
             except Exception as e:
                 print(f"Error fetching active registrations: {e}")
                 raw_regs = []
@@ -249,7 +254,8 @@ def api_miniapp_init():
                             "chat_id": r_cid,
                             "tourn_name": reg.get("tourn_name"),
                             "is_representative": True,
-                            "teams": teams
+                            "teams": teams,
+                            "all_teams": teams
                         })
                     elif user_teams:
                         for ut in user_teams:
@@ -258,7 +264,8 @@ def api_miniapp_init():
                                 "chat_id": r_cid,
                                 "tourn_name": reg.get("tourn_name"),
                                 "is_representative": False,
-                                "teams": [ut]
+                                "teams": [ut],
+                                "all_teams": teams
                             })
             except Exception as e:
                 print(f"Error fetching user registrations: {e}")
@@ -321,6 +328,28 @@ def api_miniapp_init():
                         "team": team_dict
                     })
 
+            all_teams_source = reg.get("all_teams") or raw_teams
+            occupied_players = []
+            for t_idx, t in enumerate(all_teams_source):
+                t_roster = t.get("roster", [])
+                if t_roster:
+                    occupied_players.append({
+                        "team_index": t_idx,
+                        "team_name": t.get("display_name") or t.get("team_name", "Команда"),
+                        "user_id": t.get("user_id"),
+                        "rating_team_id": t.get("rating_team_id"),
+                        "players": [
+                            {
+                                "player_id": p.get("player_id"),
+                                "name": p.get("name", ""),
+                                "surname": p.get("surname", ""),
+                                "patronymic": p.get("patronymic", "")
+                            }
+                            for p in t_roster
+                            if p.get("player_id") or p.get("surname") or p.get("name")
+                        ]
+                    })
+
             submitted_count = sum(1 for t in teams_list if t.get("roster_submitted"))
             tournaments.append({
                 "sync_req_id": sync_req_id,
@@ -329,7 +358,8 @@ def api_miniapp_init():
                 "is_representative": is_rep,
                 "submitted_count": submitted_count,
                 "total_count": len(teams_list),
-                "teams": teams_list
+                "teams": teams_list,
+                "occupied_players": occupied_players
             })
 
         venue_teams = []
@@ -347,15 +377,26 @@ def api_miniapp_init():
             ht_dict["town"] = raw_t.get("name", "") if isinstance(raw_t, dict) else (str(raw_t) if raw_t else "")
             hist_teams.append(ht_dict)
 
+        # Real role of the user
+        if is_admin:
+            user_role = "admin"
+        elif any(t.get("is_representative") for t in tournaments):
+            user_role = "rep"
+        elif any(t.get("teams") for t in tournaments):
+            user_role = "player"
+        else:
+            user_role = "guest"
+
         return jsonify({
             "user": user,
             "user_mapping": user_mapping,
+            "user_role": user_role,
             "tournaments": tournaments,
             "registrations": registrations,
             "history_teams": hist_teams,
             "venue_teams": venue_teams,
             "can_switch_roles": can_switch_roles,
-            "active_test_role": active_test_role or ("admin" if is_admin else "player")
+            "active_test_role": active_test_role if is_admin else None
         })
     except Exception as exc:
         import traceback
@@ -708,20 +749,23 @@ def api_miniapp_save_roster():
         # For non-representatives, disallow client team_index to avoid hijacking other teams
         team_index = None
 
-    updated_entity = datastore.update_team_roster_in_ds(
-        chat_id_int,
-        sync_req_id,
-        user_id,
-        rating_team_id,
-        team_name,
-        display_name,
-        roster,
-        town=town,
-        team_index=team_index,
-        target_user_id=target_user_id,
-        registered_name=registered_name,
-        is_rep=is_rep
-    )
+    try:
+        updated_entity = datastore.update_team_roster_in_ds(
+            chat_id_int,
+            sync_req_id,
+            user_id,
+            rating_team_id,
+            team_name,
+            display_name,
+            roster,
+            town=town,
+            team_index=team_index,
+            target_user_id=target_user_id,
+            registered_name=registered_name,
+            is_rep=is_rep
+        )
+    except ValueError as ve:
+        return jsonify({"error": str(ve)}), 400
 
     if not updated_entity:
         return jsonify({"error": "Не удалось сохранить состав в базе данных. Проверьте регистрацию на турнир."}), 500
@@ -763,7 +807,29 @@ def api_miniapp_save_roster():
         formatted=True
     )
 
-    return jsonify({"ok": True})
+    all_teams_after = updated_entity.get("teams", []) if updated_entity else []
+    occupied_players = []
+    for t_idx, t in enumerate(all_teams_after):
+        t_roster = t.get("roster", [])
+        if t_roster:
+            occupied_players.append({
+                "team_index": t_idx,
+                "team_name": t.get("display_name") or t.get("team_name", "Команда"),
+                "user_id": t.get("user_id"),
+                "rating_team_id": t.get("rating_team_id"),
+                "players": [
+                    {
+                        "player_id": p.get("player_id"),
+                        "name": p.get("name", ""),
+                        "surname": p.get("surname", ""),
+                        "patronymic": p.get("patronymic", "")
+                    }
+                    for p in t_roster
+                    if p.get("player_id") or p.get("surname") or p.get("name")
+                ]
+            })
+
+    return jsonify({"ok": True, "occupied_players": occupied_players})
 
 
 @app.route("/api/miniapp/link_profile", methods=["POST"])

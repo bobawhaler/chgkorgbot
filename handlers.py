@@ -4,6 +4,7 @@ import time
 import re
 import datetime
 import pytz
+import html
 
 import rating_api
 import telegram_api
@@ -20,10 +21,10 @@ def build_help_text(chat_id, is_private=True):
 
     tourn_help = (
         "<b>Поиск турниров:</b>\n"
-        "• <code>/tourns [дата/время]</code> — поиск всех доступных турниров\n"
-        "• <code>/rtourns [дата/время]</code> — поиск только рейтингуемых турниров\n"
-        "  <i>Формат даты:</i> текстом (<code>завтра</code>, <code>в субботу</code>, <code>в пятницу 19:00</code>) или датой (<code>15.08</code>, <code>2026-08-15</code>). Без параметров — на сегодня.\n"
-        "  <i>Примеры:</i> <code>/tourns завтра в 18:00</code>, <code>/rtourns 15.08</code>\n\n"
+        "• <code>/tourns &lt;дата/время&gt;</code> — поиск всех доступных турниров\n"
+        "• <code>/rtourns &lt;дата/время&gt;</code> — поиск только рейтингуемых турниров\n"
+        "  <i>Формат даты:</i> текстом (<code>сегодня</code>, <code>завтра</code>, <code>в субботу</code>, <code>в пятницу 19:00</code>) или датой (<code>15.08</code>, <code>2026-08-15</code>).\n"
+        "  <i>Примеры:</i> <code>/tourns сегодня</code>, <code>/tourns завтра в 18:00</code>, <code>/rtourns 15.08</code>\n\n"
         "<b>Создание опросов:</b>\n"
         "• <code>/poll &lt;номера&gt; [название] [до дата/время]</code> — опрос по выбранным турнирам\n"
         "  <i>Параметры:</i>\n"
@@ -777,7 +778,26 @@ def command_handler(body):
             cmd = inp[0].split("@")[0].lower()
 
             if cmd in ("/tourns", "/rtourns"):
-                date_str = " ".join(inp[1:]) if len(inp) > 1 else "сегодня"
+                if len(inp) <= 1 or not " ".join(inp[1:]).strip():
+                    user_disp = username or f"{first_name} {last_name}".strip() or str(user_id)
+                    debug.log("command_handler", t0, f"{cmd} without params from {user_disp} (user_id={user_id}, chat_id={chat_id})")
+                    user_name = f"@{username}" if username else html.escape(f"{first_name} {last_name}".strip() or "Пользователь")
+                    if not username and user_id:
+                        user_name = f'<a href="tg://user?id={user_id}">{user_name}</a>'
+                    telegram_api.send_formatted_message(
+                        chat_id,
+                        thread_id,
+                        f"⚠️ {user_name}, пожалуйста, укажите дату или время для поиска турниров.\n\n"
+                        f"<b>Примеры:</b>\n"
+                        f"• <code>{cmd} сегодня</code>\n"
+                        f"• <code>{cmd} завтра в 19:00</code>\n"
+                        f"• <code>{cmd} в субботу</code>\n"
+                        f"• <code>{cmd} 15.08</code>",
+                        reply_to_message_id=msg_id,
+                    )
+                    return ""
+
+                date_str = " ".join(inp[1:])
                 tourn_date, with_time = helpers.parse_date(
                     date_str, helpers.get_chat_timezone(chat_id)
                 )

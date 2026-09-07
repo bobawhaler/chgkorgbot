@@ -1094,8 +1094,9 @@
       candidatesLimit: 20,
       candidatesCache: {},
       displayNamesSuggestions: [],
+      userRole: "guest",
       canSwitchRoles: false,
-      activeTestRole: "admin",
+      activeTestRole: null,
       isRecalculatingStatuses: false
     };
 
@@ -1141,6 +1142,7 @@
     }
 
     async function switchTestRole(role) {
+      if (!appData.canSwitchRoles) return;
       haptic("impact", "medium");
       appData.activeTestRole = role;
       await loadInitData(true, role);
@@ -1170,7 +1172,7 @@
         const initDataRaw = tg?.initData || "";
         const unsafeUser = tg?.initDataUnsafe?.user;
         const uid = unsafeUser?.id || null;
-        const targetRole = overrideRole || appData.activeTestRole || "";
+        const targetRole = appData.canSwitchRoles ? (overrideRole || appData.activeTestRole || "") : "";
 
         updateStatus(`Запрос данных с сервера (User ID: ${uid || "нет"})...`);
 
@@ -1205,8 +1207,9 @@
         appData.registrations = data.registrations || [];
         appData.historyTeams = data.history_teams || [];
         appData.venueTeams = data.venue_teams || [];
-        appData.canSwitchRoles = data.can_switch_roles;
-        appData.activeTestRole = data.active_test_role || "admin";
+        appData.canSwitchRoles = Boolean(data.can_switch_roles);
+        appData.userRole = data.user_role || "guest";
+        appData.activeTestRole = appData.canSwitchRoles ? (data.active_test_role || "admin") : null;
 
         // Render role switcher bar for admin
         const switcherBox = document.getElementById("adminRoleSwitcherBox");
@@ -1280,10 +1283,20 @@
         const hasTournaments = appData.tournaments && appData.tournaments.length > 0;
         if (!hasTournaments) {
           let emptyText = "Нет активных турниров с включенным сбором составов.<br>Зарегистрируйте команду в чате, где включен сбор составов.";
-          if (appData.activeTestRole === "guest") {
-            emptyText = "В роли гостя турниры и команды не отображаются.<br>Переключитесь на роль «Команда», «Представитель» или «Админ».";
-          } else if (appData.activeTestRole === "player") {
-            emptyText = "Нет зарегистрированных команд.<br>Зарегистрируйте команду в чате турнира.";
+          if (appData.canSwitchRoles) {
+            if (appData.activeTestRole === "guest") {
+              emptyText = "В роли гостя турниры и команды не отображаются.<br>Переключитесь на роль «Команда», «Представитель» или «Админ».";
+            } else if (appData.activeTestRole === "player") {
+              emptyText = "Нет зарегистрированных команд.<br>Зарегистрируйте команду в чате турнира.";
+            }
+          } else {
+            if (appData.userRole === "guest") {
+              emptyText = "У вас пока нет зарегистрированных команд на активные турниры.<br>Зарегистрируйте команду в чате турнира.";
+            } else if (appData.userRole === "player") {
+              emptyText = "Нет зарегистрированных команд.<br>Зарегистрируйте команду в чате турнира.";
+            } else if (appData.userRole === "rep") {
+              emptyText = "Нет активных турниров на вашей площадке.<br>Создайте заявку на турнир в чате площадки.";
+            }
           }
           container.innerHTML = `
             <div class="empty-state">
@@ -1294,155 +1307,213 @@
           return;
         }
 
-        const isRepView = (appData.activeTestRole === "player" || appData.activeTestRole === "guest")
-          ? false
-          : ((appData.activeTestRole in { "admin": 1, "rep": 1, "representative": 1 }) || appData.tournaments.some(t => t.is_representative));
+        const myUserId = appData.user?.id ? Number(appData.user.id) : null;
 
-        let html = "";
-        if (isRepView) {
-          // Representative / Admin Organizer Dashboard
-          appData.tournaments.forEach((tourn, tournIndex) => {
-            const teams = tourn.teams || [];
-            const submittedCount = teams.filter(t => t.roster_submitted || t.submitted_externally || (t.roster && t.roster.length > 0)).length;
-            const totalCount = teams.length;
-            const allSubmitted = totalCount > 0 && submittedCount === totalCount;
-            const statsBadge = allSubmitted
-              ? `<span class="badge badge-success">&#128994; Сдано ${submittedCount} из ${totalCount}</span>`
-              : (submittedCount > 0 
-                  ? `<span class="badge badge-warning">&#128993; Сдано ${submittedCount} из ${totalCount}</span>` 
-                  : `<span class="badge badge-danger">&#128308; Сдано 0 из ${totalCount}</span>`);
+        // Check if admin is overriding role via debug role switcher
+        const forcePlayerView = Boolean(appData.canSwitchRoles && appData.activeTestRole === "player");
+        const forceRepView = Boolean(appData.canSwitchRoles && (appData.activeTestRole === "admin" || appData.activeTestRole === "rep" || appData.activeTestRole === "representative"));
 
-            let teamsHtml = "";
-            teams.forEach((t, tIndex) => {
-              const isSub = Boolean(t.roster_submitted);
-              const isExt = Boolean(t.submitted_externally);
-              const hasRoster = Boolean(t.roster && t.roster.length > 0);
-              
-              let subBadge = "";
-              if (isExt) {
-                subBadge = `<span class="badge" style="background: rgba(36, 129, 204, 0.15); color: var(--link-color); font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128994; Сдан вне бота</span>`;
-              } else if (isSub) {
-                const countNote = hasRoster ? ` (${t.roster.length} чел.)` : "";
-                subBadge = `<span class="badge badge-success" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128994; Сдан${countNote}</span>`;
-              } else if (hasRoster && !isSub) {
-                subBadge = `<span class="badge badge-warning" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128993; На доработке</span>`;
-              } else if (t.bot_started === false) {
-                subBadge = `<span class="badge" style="background: rgba(255, 152, 0, 0.15); color: #e65100; font-size: 11px; padding: 3px 8px; white-space: nowrap;">⚠️ Бот не запущен</span>`;
-              } else {
-                subBadge = `<span class="badge badge-danger" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128308; Не сдан</span>`;
-              }
-              
-              const teamDisplayName = t.display_name || t.team_name || "Команда";
-              const baseInfo = t.rating_team_id ? `🛡 Базовая: ${escapeHtml(t.team_name)} [ID ${t.rating_team_id}]` : `🛡 ${escapeHtml(t.team_name || "Без ID рейтинга")}`;
-              const townInfo = t.town ? ` • 🏙 ${escapeHtml(t.town)}` : "";
-              const contactInfo = t.username ? ` • 👤 @${escapeHtml(t.username)}` : (t.user_id ? ` • 👤 ID ${t.user_id}` : "");
+        function renderRepTournHtml(tourn, tournIndex) {
+          const teams = tourn.teams || [];
+          const submittedCount = teams.filter(t => t.roster_submitted || t.submitted_externally || (t.roster && t.roster.length > 0)).length;
+          const totalCount = teams.length;
+          const allSubmitted = totalCount > 0 && submittedCount === totalCount;
+          const statsBadge = allSubmitted
+            ? `<span class="badge badge-success">&#128994; Сдано ${submittedCount} из ${totalCount}</span>`
+            : (submittedCount > 0 
+                ? `<span class="badge badge-warning">&#128993; Сдано ${submittedCount} из ${totalCount}</span>` 
+                : `<span class="badge badge-danger">&#128308; Сдано 0 из ${totalCount}</span>`);
 
-              let actionButtons = `
-                <button class="btn btn-secondary btn-sm" style="flex: 1; min-width: 85px; padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 8px;" onclick="event.stopPropagation(); selectTournamentTeam(${tournIndex}, ${tIndex})">
-                  ✏️ Состав
+          let teamsHtml = "";
+          teams.forEach((t, tIndex) => {
+            const isSub = Boolean(t.roster_submitted);
+            const isExt = Boolean(t.submitted_externally);
+            const hasRoster = Boolean(t.roster && t.roster.length > 0);
+            const isMyTeam = Boolean(myUserId && t.user_id && Number(t.user_id) === myUserId);
+            
+            let subBadge = "";
+            if (isExt) {
+              subBadge = `<span class="badge" style="background: rgba(36, 129, 204, 0.15); color: var(--link-color); font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128994; Сдан вне бота</span>`;
+            } else if (isSub) {
+              const countNote = hasRoster ? ` (${t.roster.length} чел.)` : "";
+              subBadge = `<span class="badge badge-success" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128994; Сдан${countNote}</span>`;
+            } else if (hasRoster && !isSub) {
+              subBadge = `<span class="badge badge-warning" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128993; На доработке</span>`;
+            } else if (t.bot_started === false) {
+              subBadge = `<span class="badge" style="background: rgba(255, 152, 0, 0.15); color: #e65100; font-size: 11px; padding: 3px 8px; white-space: nowrap;">⚠️ Бот не запущен</span>`;
+            } else {
+              subBadge = `<span class="badge badge-danger" style="font-size: 11px; padding: 3px 8px; white-space: nowrap;">&#128308; Не сдан</span>`;
+            }
+            
+            const teamDisplayName = t.display_name || t.team_name || "Команда";
+            const baseInfo = t.rating_team_id ? `🛡 Базовая: ${escapeHtml(t.team_name)} [ID ${t.rating_team_id}]` : `🛡 ${escapeHtml(t.team_name || "Без ID рейтинга")}`;
+            const townInfo = t.town ? ` • 🏙 ${escapeHtml(t.town)}` : "";
+            const contactInfo = t.username ? ` • 👤 @${escapeHtml(t.username)}` : (t.user_id ? ` • 👤 ID ${t.user_id}` : "");
+
+            let actionButtons = `
+              <button class="btn btn-secondary btn-sm" style="flex: 1; min-width: 85px; padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 8px;" onclick="event.stopPropagation(); selectTournamentTeam(${tournIndex}, ${tIndex})">
+                ✏️ Состав
+              </button>
+            `;
+
+            if (isSub || isExt) {
+              actionButtons += `
+                <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--danger-color); border-color: rgba(229, 57, 53, 0.4);" onclick="event.stopPropagation(); rejectTeamRoster(${tournIndex}, ${tIndex})">
+                  ↩️ На доработку
                 </button>
               `;
-
-              if (isSub || isExt) {
-                actionButtons += `
-                  <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--danger-color); border-color: rgba(229, 57, 53, 0.4);" onclick="event.stopPropagation(); rejectTeamRoster(${tournIndex}, ${tIndex})">
-                    ↩️ На доработку
-                  </button>
-                `;
-              } else {
-                actionButtons += `
-                  <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: #2e7d32; border-color: rgba(46, 125, 50, 0.4);" onclick="event.stopPropagation(); markTeamSubmitted(${tournIndex}, ${tIndex}, true)">
-                    ✅ Сдан вне бота
-                  </button>
-                `;
-                if (t.user_id) {
-                  actionButtons += `
-                    <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--link-color); border-color: rgba(36, 129, 204, 0.4);" onclick="event.stopPropagation(); remindTeamRoster(${tournIndex}, ${tIndex})">
-                      🔔 Напомнить
-                    </button>
-                  `;
-                }
-              }
-
-              if (isExt) {
-                actionButtons += `
-                  <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--hint-color); border-color: rgba(128, 128, 128, 0.4);" onclick="event.stopPropagation(); markTeamSubmitted(${tournIndex}, ${tIndex}, false)">
-                    ❌ Снять отметку
-                  </button>
-                `;
-              }
-
-              teamsHtml += `
-                <div class="tourn-team-item" onclick="selectTournamentTeam(${tournIndex}, ${tIndex})">
-                  <div class="tourn-team-header">
-                    <div class="tourn-team-title">&#127942; ${escapeHtml(teamDisplayName)}</div>
-                    <div style="flex-shrink: 0;">${subBadge}</div>
-                  </div>
-                  <div class="tourn-team-sub">
-                    ${baseInfo}${townInfo}${contactInfo}
-                  </div>
-                  <div class="tourn-team-actions">
-                    ${actionButtons}
-                  </div>
-                </div>
+            } else {
+              actionButtons += `
+                <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: #2e7d32; border-color: rgba(46, 125, 50, 0.4);" onclick="event.stopPropagation(); markTeamSubmitted(${tournIndex}, ${tIndex}, true)">
+                  ✅ Сдан вне бота
+                </button>
               `;
-            });
-
-            html += `
-              <div class="tourn-card">
-                <div class="tourn-card-header">
-                  <div class="tourn-card-title">🏆 ${escapeHtml(tourn.tourn_name || "Турнир")}</div>
-                  ${statsBadge}
-                </div>
-                <div class="tourn-actions-bar">
-                  <button class="btn-csv" onclick="sendTournamentCsvToTg('${tourn.sync_req_id}', '${tourn.chat_id}')">
-                    <span>✉️ Отправить CSV файл для рейтинга в Telegram</span>
+              if (t.user_id) {
+                actionButtons += `
+                  <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--link-color); border-color: rgba(36, 129, 204, 0.4);" onclick="event.stopPropagation(); remindTeamRoster(${tournIndex}, ${tIndex})">
+                    🔔 Напомнить
                   </button>
+                `;
+              }
+            }
+
+            if (isExt) {
+              actionButtons += `
+                <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--hint-color); border-color: rgba(128, 128, 128, 0.4);" onclick="event.stopPropagation(); markTeamSubmitted(${tournIndex}, ${tIndex}, false)">
+                  ❌ Снять отметку
+                </button>
+              `;
+            }
+
+            const myTeamBadge = isMyTeam
+              ? `<span class="badge" style="background: rgba(46, 125, 50, 0.15); color: #2e7d32; font-size: 11px; padding: 2px 7px; font-weight: 600;">⭐ Ваша команда</span>`
+              : "";
+
+            teamsHtml += `
+              <div class="tourn-team-item" onclick="selectTournamentTeam(${tournIndex}, ${tIndex})">
+                <div class="tourn-team-header">
+                  <div class="tourn-team-title" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                    <span>&#127942; ${escapeHtml(teamDisplayName)}</span>
+                    ${myTeamBadge}
+                  </div>
+                  <div style="flex-shrink: 0;">${subBadge}</div>
                 </div>
-                <div style="font-size: 12px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin: 10px 0 6px 0; letter-spacing: 0.3px;">
-                  👥 Заявленные команды (${totalCount}):
+                <div class="tourn-team-sub">
+                  ${baseInfo}${townInfo}${contactInfo}
                 </div>
-                <div class="tourn-teams-list">
-                  ${teamsHtml || '<div style="color: var(--hint-color); font-size: 13px; padding: 8px 0;">Заявок пока нет</div>'}
+                <div class="tourn-team-actions">
+                  ${actionButtons}
                 </div>
               </div>
             `;
           });
-        } else {
-          // Player view: list of player's teams
-          appData.tournaments.forEach((tourn, tournIndex) => {
-            (tourn.teams || []).forEach((t, tIndex) => {
-              const isSub = t.roster_submitted || (t.roster && t.roster.length > 0);
-              const statusBadge = isSub
-                ? `<span class="badge badge-success">&#128994; Состав сдан (${t.roster.length} чел.)</span>`
-                : `<span class="badge badge-danger">&#128308; Состав НЕ сдан</span>`;
 
-              const teamDisplayName = t.display_name || t.team_name || "Команда";
-              let metaHtml = "";
-              if (t.rating_team_id) {
-                metaHtml += `<span>🛡 Базовая: ${escapeHtml(t.team_name)} [ID ${t.rating_team_id}]</span>`;
-              }
-              if (t.town) {
-                metaHtml += `<span>• 🏙 ${escapeHtml(t.town)}</span>`;
-              }
+          return `
+            <div class="tourn-card">
+              <div class="tourn-card-header">
+                <div class="tourn-card-title">🏆 ${escapeHtml(tourn.tourn_name || "Турнир")}</div>
+                ${statsBadge}
+              </div>
+              <div class="tourn-actions-bar">
+                <button class="btn-csv" onclick="sendTournamentCsvToTg('${tourn.sync_req_id}', '${tourn.chat_id}')">
+                  <span>✉️ Отправить CSV файл для рейтинга в Telegram</span>
+                </button>
+              </div>
+              <div style="font-size: 12px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin: 10px 0 6px 0; letter-spacing: 0.3px;">
+                👥 Заявленные команды (${totalCount}):
+              </div>
+              <div class="tourn-teams-list">
+                ${teamsHtml || '<div style="color: var(--hint-color); font-size: 13px; padding: 8px 0;">Заявок пока нет</div>'}
+              </div>
+            </div>
+          `;
+        }
 
-              html += `
-                <div class="reg-item" onclick="selectTournamentTeam(${tournIndex}, ${tIndex})">
-                  <div class="reg-header">
-                    <div class="reg-tourn-name">🏆 ${escapeHtml(tourn.tourn_name || "Турнир")}</div>
-                    ${statusBadge}
-                  </div>
-                  <div class="reg-team-row">
-                    <span>👥</span> <b>${escapeHtml(teamDisplayName)}</b>
-                  </div>
-                  ${metaHtml ? `<div class="reg-meta">${metaHtml}</div>` : ""}
-                  <button class="btn btn-secondary btn-block btn-sm" style="margin-top: 10px;" onclick="event.stopPropagation(); selectTournamentTeam(${tournIndex}, ${tIndex})">
-                    ✏️ ${isSub ? "Изменить состав" : "Заполнить состав"}
-                  </button>
+        function renderPlayerTournHtml(tourn, tournIndex) {
+          let res = "";
+          (tourn.teams || []).forEach((t, tIndex) => {
+            const isSub = t.roster_submitted || (t.roster && t.roster.length > 0);
+            const statusBadge = isSub
+              ? `<span class="badge badge-success">&#128994; Состав сдан (${t.roster.length} чел.)</span>`
+              : `<span class="badge badge-danger">&#128308; Состав НЕ сдан</span>`;
+
+            const teamDisplayName = t.display_name || t.team_name || "Команда";
+            let metaHtml = "";
+            if (t.rating_team_id) {
+              metaHtml += `<span>🛡 Базовая: ${escapeHtml(t.team_name)} [ID ${t.rating_team_id}]</span>`;
+            }
+            if (t.town) {
+              metaHtml += `<span>• 🏙 ${escapeHtml(t.town)}</span>`;
+            }
+
+            res += `
+              <div class="reg-item" onclick="selectTournamentTeam(${tournIndex}, ${tIndex})">
+                <div class="reg-header">
+                  <div class="reg-tourn-name">🏆 ${escapeHtml(tourn.tourn_name || "Турнир")}</div>
+                  ${statusBadge}
                 </div>
-              `;
-            });
+                <div class="reg-team-row">
+                  <span>👥</span> <b>${escapeHtml(teamDisplayName)}</b>
+                </div>
+                ${metaHtml ? `<div class="reg-meta">${metaHtml}</div>` : ""}
+                <button class="btn btn-secondary btn-block btn-sm" style="margin-top: 10px;" onclick="event.stopPropagation(); selectTournamentTeam(${tournIndex}, ${tIndex})">
+                  ✏️ ${isSub ? "Изменить состав" : "Заполнить состав"}
+                </button>
+              </div>
+            `;
           });
+          return res;
+        }
+
+        let html = "";
+        if (forcePlayerView) {
+          appData.tournaments.forEach((tourn, idx) => {
+            html += renderPlayerTournHtml(tourn, idx);
+          });
+        } else if (forceRepView) {
+          appData.tournaments.forEach((tourn, idx) => {
+            html += renderRepTournHtml(tourn, idx);
+          });
+        } else {
+          // Native mixed-role handling: split by each tournament's actual role
+          const repTourns = [];
+          const playerTourns = [];
+          appData.tournaments.forEach((tourn, idx) => {
+            if (tourn.is_representative) {
+              repTourns.push({ tourn, idx });
+            } else {
+              playerTourns.push({ tourn, idx });
+            }
+          });
+
+          if (repTourns.length > 0 && playerTourns.length > 0) {
+            // Mixed role! Show clear section headers
+            html += `
+              <div style="font-size: 13px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin: 4px 0 10px 2px; letter-spacing: 0.5px;">
+                🏛 Площадка (вы представитель)
+              </div>
+            `;
+            repTourns.forEach(item => {
+              html += renderRepTournHtml(item.tourn, item.idx);
+            });
+
+            html += `
+              <div style="font-size: 13px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin: 20px 0 10px 2px; letter-spacing: 0.5px;">
+                👥 Ваши команды (вы участник)
+              </div>
+            `;
+            playerTourns.forEach(item => {
+              html += renderPlayerTournHtml(item.tourn, item.idx);
+            });
+          } else if (repTourns.length > 0) {
+            repTourns.forEach(item => {
+              html += renderRepTournHtml(item.tourn, item.idx);
+            });
+          } else {
+            playerTourns.forEach(item => {
+              html += renderPlayerTournHtml(item.tourn, item.idx);
+            });
+          }
         }
 
         container.innerHTML = html;
@@ -1779,9 +1850,9 @@
         // Representative Actions Box
         const repBox = document.getElementById("repRosterActionBox");
         const repButtons = document.getElementById("repRosterActionButtons");
-        const isRep = (appData.activeTestRole === "player" || appData.activeTestRole === "guest")
-          ? false
-          : ((appData.activeTestRole in { "admin": 1, "rep": 1, "representative": 1 }) || Boolean(appData.currentTourn?.is_representative));
+        const isRep = appData.canSwitchRoles
+          ? (appData.activeTestRole === "admin" || appData.activeTestRole === "rep" || appData.activeTestRole === "representative")
+          : Boolean(appData.currentTourn?.is_representative);
 
         if (repBox && repButtons) {
           if (isRep && appData.currentTeamRef) {
@@ -1826,6 +1897,81 @@
       }
     }
 
+    function getOtherTeamsOccupiedPlayers() {
+      const tourn = appData.currentTourn;
+      if (!tourn) return { pids: new Map(), names: new Map() };
+
+      const pids = new Map();
+      const names = new Map();
+
+      const currentTeamIndex = appData.currentTeamIndex;
+      const currentUid = appData.currentTargetUserId ? Number(appData.currentTargetUserId) : null;
+      const currentRatingId = appData.currentRatingTeamId ? Number(appData.currentRatingTeamId) : null;
+      const currentTeamName = (appData.registeredTeamName || appData.currentTeamName || "").trim().toLowerCase();
+
+      // 1. Check occupied_players list provided by backend
+      const occupiedList = tourn.occupied_players || [];
+      occupiedList.forEach((t) => {
+        const isCurrentTeam = (
+          (currentTeamIndex !== null && currentTeamIndex !== undefined && t.team_index === currentTeamIndex) ||
+          (currentUid && t.user_id && Number(t.user_id) === currentUid) ||
+          (currentRatingId && t.rating_team_id && Number(t.rating_team_id) === currentRatingId) ||
+          (currentTeamName && (t.team_name || "").trim().toLowerCase() === currentTeamName)
+        );
+        if (isCurrentTeam) return;
+
+        const teamDisplayName = t.team_name || "Другая команда";
+        (t.players || []).forEach(p => {
+          if (p.player_id) {
+            pids.set(Number(p.player_id), teamDisplayName);
+          }
+          const fullName = `${p.surname || ""} ${p.name || ""}`.trim().toLowerCase();
+          if (fullName) {
+            names.set(fullName, teamDisplayName);
+          }
+        });
+      });
+
+      // 2. Also check tourn.teams (if present, e.g. for representatives)
+      if (tourn.teams && tourn.teams.length > 0) {
+        tourn.teams.forEach((t, idx) => {
+          if (currentTeamIndex !== null && currentTeamIndex !== undefined && idx === currentTeamIndex) return;
+          if (currentTeamIndex === null && currentUid && t.user_id && Number(t.user_id) === currentUid) return;
+          if (currentTeamIndex === null && currentTeamName && (t.display_name || t.team_name || "").trim().toLowerCase() === currentTeamName) return;
+
+          const teamDisplayName = t.display_name || t.team_name || "Другая команда";
+          (t.roster || []).forEach(p => {
+            if (p.player_id) {
+              pids.set(Number(p.player_id), teamDisplayName);
+            }
+            const fullName = `${p.surname || ""} ${p.name || ""}`.trim().toLowerCase();
+            if (fullName) {
+              names.set(fullName, teamDisplayName);
+            }
+          });
+        });
+      }
+
+      return { pids, names };
+    }
+
+    function getPlayerConflictTeam(pid, name, surname) {
+      const { pids, names } = getOtherTeamsOccupiedPlayers();
+      if (pid && pids.has(Number(pid))) {
+        return pids.get(Number(pid));
+      }
+      const fullName = `${surname || ""} ${name || ""}`.trim().toLowerCase();
+      if (fullName && names.has(fullName)) {
+        return names.get(fullName);
+      }
+      return null;
+    }
+
+    function showOccupiedAlert(fio, conflictTeam) {
+      haptic("notification", "error");
+      alert(`⚠️ Игрок «${fio}» уже включен в состав команды «${conflictTeam}» на этот турнир.\n\nОдин игрок не может быть в составах двух разных команд на одной игре.`);
+    }
+
     function renderRosterList() {
       const countEl = document.getElementById("rosterCount");
       if (countEl) countEl.innerText = appData.currentRoster.length;
@@ -1864,8 +2010,16 @@
         const sub = p.player_id ? `ID: ${p.player_id}${p.town ? " • " + p.town : ""}` : "Без ID рейтинга";
         const disabledAttr = appData.isRecalculatingStatuses ? 'style="opacity: 0.65; pointer-events: none;"' : '';
 
+        const conflictTeam = getPlayerConflictTeam(p.player_id, p.name, p.surname);
+        const conflictWarning = conflictTeam
+          ? `<div style="font-size: 11px; color: var(--danger-color); font-weight: 600; margin-top: 3px;">⚠️ Конфликт: также в составе «${escapeHtml(conflictTeam)}»</div>`
+          : '';
+        const conflictStyle = conflictTeam
+          ? 'style="border: 1.5px solid var(--danger-color); background: rgba(229, 57, 53, 0.05);"'
+          : '';
+
         html += `
-          <div class="roster-player">
+          <div class="roster-player" ${conflictStyle}>
             <div class="player-left">
               <div class="player-num">${idx + 1}</div>
               <div class="status-pill status-${status}" ${disabledAttr} onclick="cyclePlayerStatus(${idx})" title="Нажмите для смены статуса">
@@ -1874,6 +2028,7 @@
               <div class="player-info">
                 <div class="player-name">${escapeHtml(displayName)}</div>
                 <div class="player-sub">${escapeHtml(sub)}</div>
+                ${conflictWarning}
               </div>
             </div>
             <button class="btn-remove" onclick="removePlayerFromRoster(${idx})">&#10005;</button>
@@ -1997,6 +2152,13 @@
         return;
       }
 
+      // Sort: available first, occupied in other teams last
+      availableCandidates.sort((a, b) => {
+        const confA = getPlayerConflictTeam(a.pid, a.name, a.surname) ? 1 : 0;
+        const confB = getPlayerConflictTeam(b.pid, b.name, b.surname) ? 1 : 0;
+        return confA - confB;
+      });
+
       const limit = appData.candidatesLimit || 20;
       const visibleCandidates = availableCandidates.slice(0, limit);
 
@@ -2010,18 +2172,35 @@
         else if (c.category === "venue") catIcon = "&#128205;";
 
         const fio = `${c.surname || ""} ${c.name || ""}`.trim();
-        const badgeStr = c.badge ? ` • ${c.badge}` : "";
+        const conflictTeam = getPlayerConflictTeam(c.pid, c.name, c.surname);
+
+        let badgeStr = c.badge ? ` • ${c.badge}` : "";
+        if (conflictTeam) {
+          badgeStr += ` • <span style="color: var(--danger-color); font-weight: 600;">⚠️ В составе «${escapeHtml(conflictTeam)}»</span>`;
+        }
         const sub = c.pid ? `ID: ${c.pid}${c.town ? " • " + c.town : ""}${badgeStr}` : `Без ID${badgeStr}`;
 
-        html += `
-          <div class="hint-item" onclick="addCandidateToRoster(${c.pid || 0}, '${escapeQuotes(c.name)}', '${escapeQuotes(c.surname)}', '${escapeQuotes(c.patronymic || "")}', '${c.default_status || "B"}')">
-            <div class="hint-info">
-              <div class="hint-name"><span>${catIcon}</span> <b>${escapeHtml(fio)}</b></div>
-              <div class="hint-sub">${escapeHtml(sub)}</div>
+        if (conflictTeam) {
+          html += `
+            <div class="hint-item" style="opacity: 0.65; cursor: not-allowed;" onclick="showOccupiedAlert('${escapeQuotes(fio)}', '${escapeQuotes(conflictTeam)}')">
+              <div class="hint-info">
+                <div class="hint-name"><span>${catIcon}</span> <b>${escapeHtml(fio)}</b></div>
+                <div class="hint-sub">${sub}</div>
+              </div>
+              <button class="hint-add-btn" style="opacity: 0.6; cursor: not-allowed; background: var(--secondary-bg); color: var(--hint-color);" onclick="event.stopPropagation(); showOccupiedAlert('${escapeQuotes(fio)}', '${escapeQuotes(conflictTeam)}')">&#9888; Занят</button>
             </div>
-            <button class="hint-add-btn">&#10010; Добавить</button>
-          </div>
-        `;
+          `;
+        } else {
+          html += `
+            <div class="hint-item" onclick="addCandidateToRoster(${c.pid || 0}, '${escapeQuotes(c.name)}', '${escapeQuotes(c.surname)}', '${escapeQuotes(c.patronymic || "")}', '${c.default_status || "B"}')">
+              <div class="hint-info">
+                <div class="hint-name"><span>${catIcon}</span> <b>${escapeHtml(fio)}</b></div>
+                <div class="hint-sub">${sub}</div>
+              </div>
+              <button class="hint-add-btn">&#10010; Добавить</button>
+            </div>
+          `;
+        }
       });
 
       if (availableCandidates.length > limit) {
@@ -2071,6 +2250,12 @@
     }
 
     function addCandidateToRoster(pid, name, surname, patronymic, defaultStatus) {
+      const fio = `${surname || ""} ${name || ""}`.trim();
+      const conflictTeam = getPlayerConflictTeam(pid, name, surname);
+      if (conflictTeam) {
+        showOccupiedAlert(fio, conflictTeam);
+        return;
+      }
       haptic("impact", "medium");
       appData.currentRoster.push({
         player_id: pid || null,
@@ -2121,17 +2306,35 @@
         let html = '<div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px;">';
         players.slice(0, 10).forEach(p => {
           const fio = `${p.surname || ""} ${p.name || ""} ${p.patronymic || ""}`.trim();
-          const badgeStr = p.badge ? ` • ${p.badge}` : "";
+          const conflictTeam = getPlayerConflictTeam(p.id, p.name, p.surname);
+
+          let badgeStr = p.badge ? ` • ${p.badge}` : "";
+          if (conflictTeam) {
+            badgeStr += ` • <span style="color: var(--danger-color); font-weight: 600;">⚠️ В составе «${escapeHtml(conflictTeam)}»</span>`;
+          }
           const sub = `ID ${p.id}${p.town ? " • " + p.town : ""}${p.rating ? " • Рейтинг: " + p.rating : ""}${badgeStr}`;
-          html += `
-            <div class="hint-item" onclick="addFoundPlayer(${p.id}, '${escapeQuotes(p.name)}', '${escapeQuotes(p.surname)}', '${escapeQuotes(p.patronymic || "")}')">
-              <div class="hint-info">
-                <div class="hint-name"><span>&#128100;</span> <b>${escapeHtml(fio)}</b></div>
-                <div class="hint-sub">${escapeHtml(sub)}</div>
+
+          if (conflictTeam) {
+            html += `
+              <div class="hint-item" style="opacity: 0.65; cursor: not-allowed;" onclick="showOccupiedAlert('${escapeQuotes(fio)}', '${escapeQuotes(conflictTeam)}')">
+                <div class="hint-info">
+                  <div class="hint-name"><span>&#128100;</span> <b>${escapeHtml(fio)}</b></div>
+                  <div class="hint-sub">${sub}</div>
+                </div>
+                <button class="hint-add-btn" style="opacity: 0.6; cursor: not-allowed; background: var(--secondary-bg); color: var(--hint-color);" onclick="event.stopPropagation(); showOccupiedAlert('${escapeQuotes(fio)}', '${escapeQuotes(conflictTeam)}')">&#9888; Занят</button>
               </div>
-              <button class="hint-add-btn">&#10010; Добавить</button>
-            </div>
-          `;
+            `;
+          } else {
+            html += `
+              <div class="hint-item" onclick="addFoundPlayer(${p.id}, '${escapeQuotes(p.name)}', '${escapeQuotes(p.surname)}', '${escapeQuotes(p.patronymic || "")}')">
+                <div class="hint-info">
+                  <div class="hint-name"><span>&#128100;</span> <b>${escapeHtml(fio)}</b></div>
+                  <div class="hint-sub">${sub}</div>
+                </div>
+                <button class="hint-add-btn">&#10010; Добавить</button>
+              </div>
+            `;
+          }
         });
         html += "</div>";
         container.innerHTML = html;
@@ -2141,6 +2344,12 @@
     }
 
     function addFoundPlayer(pid, name, surname, patronymic) {
+      const fio = `${surname || ""} ${name || ""}`.trim();
+      const conflictTeam = getPlayerConflictTeam(pid, name, surname);
+      if (conflictTeam) {
+        showOccupiedAlert(fio, conflictTeam);
+        return;
+      }
       haptic("impact", "medium");
       appData.currentRoster.push({
         player_id: pid,
@@ -2167,6 +2376,12 @@
       const name = document.getElementById("inputUnratedName").value.trim();
       if (!name && !surname) {
         alert("Введите имя или фамилию игрока");
+        return;
+      }
+      const fio = `${surname} ${name}`.trim();
+      const conflictTeam = getPlayerConflictTeam(null, name, surname);
+      if (conflictTeam) {
+        showOccupiedAlert(fio, conflictTeam);
         return;
       }
       haptic("impact", "medium");
@@ -2540,6 +2755,17 @@
         return;
       }
 
+      // Check conflicts with other teams before saving
+      for (const p of (appData.currentRoster || [])) {
+        const conflictTeam = getPlayerConflictTeam(p.player_id, p.name, p.surname);
+        if (conflictTeam) {
+          const pFio = (p.surname || p.name) ? `${p.surname || ""} ${p.name || ""}`.trim() : (p.display_name || "Игрок");
+          haptic("notification", "error");
+          alert(`⚠️ Невозможно сохранить состав:\n\nИгрок «${pFio}» уже включен в состав команды «${conflictTeam}» на этот турнир.\n\nОдин игрок не может быть в составах двух разных команд на одной игре.`);
+          return;
+        }
+      }
+
       const btn = document.getElementById("btnSaveRoster");
       btn.disabled = true;
       btn.innerHTML = '<div class="spinner" style="border-top-color: #fff;"></div> Сохранение...';
@@ -2560,7 +2786,7 @@
           roster: appData.currentRoster,
           team_index: appData.currentTeamIndex,
           target_user_id: appData.currentTargetUserId || null,
-          test_role: appData.activeTestRole || ""
+          test_role: appData.canSwitchRoles ? (appData.activeTestRole || "") : ""
         };
 
         const resp = await fetch("/api/miniapp/save_roster", {
@@ -2569,9 +2795,13 @@
           body: JSON.stringify(payload)
         });
 
+        const respData = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({}));
-          throw new Error(errData.error || "Ошибка при сохранении состава");
+          throw new Error(respData.error || "Ошибка при сохранении состава");
+        }
+
+        if (respData.occupied_players && appData.currentTourn) {
+          appData.currentTourn.occupied_players = respData.occupied_players;
         }
 
         haptic("notification", "success");

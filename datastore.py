@@ -702,6 +702,66 @@ def get_user_active_registrations(user_id):
     return _sort_registrations_newest_first(active_regs)
 
 
+def check_roster_conflicts(teams, incoming_roster, current_team_idx=None):
+    """
+    Checks if any player in incoming_roster is already present in another team's roster
+    for the same tournament, or appears multiple times within incoming_roster.
+    Returns: None if no conflict, or an error string describing the conflict.
+    """
+    if not incoming_roster:
+        return None
+
+    seen_pids = set()
+    seen_names = set()
+    for p in incoming_roster:
+        p_id = p.get("player_id")
+        p_pid = int(p_id) if p_id and str(p_id).isdigit() and int(p_id) > 0 else None
+        p_surname = (p.get("surname") or "").strip().lower()
+        p_name = (p.get("name") or "").strip().lower()
+        p_display = f"{p.get('surname', '')} {p.get('name', '')}".strip() or (f"ID {p_pid}" if p_pid else "Игрок")
+
+        if p_pid:
+            if p_pid in seen_pids:
+                return f"Игрок «{p_display}» (ID {p_pid}) добавлен в состав дважды."
+            seen_pids.add(p_pid)
+        elif p_surname and p_name:
+            key = (p_surname, p_name)
+            if key in seen_names:
+                return f"Игрок «{p_display}» добавлен в состав дважды."
+            seen_names.add(key)
+
+    for idx, team in enumerate(teams):
+        if current_team_idx is not None and idx == current_team_idx:
+            continue
+
+        other_roster = team.get("roster", [])
+        if not other_roster:
+            continue
+
+        team_name = team.get("display_name") or team.get("team_name") or f"Команда #{idx + 1}"
+
+        for p in incoming_roster:
+            p_id = p.get("player_id")
+            p_pid = int(p_id) if p_id and str(p_id).isdigit() and int(p_id) > 0 else None
+            p_surname = (p.get("surname") or "").strip().lower()
+            p_name = (p.get("name") or "").strip().lower()
+            p_display = f"{p.get('surname', '')} {p.get('name', '')}".strip() or (f"ID {p_pid}" if p_pid else "Игрок")
+
+            for op in other_roster:
+                op_id = op.get("player_id")
+                op_pid = int(op_id) if op_id and str(op_id).isdigit() and int(op_id) > 0 else None
+                op_surname = (op.get("surname") or "").strip().lower()
+                op_name = (op.get("name") or "").strip().lower()
+
+                if p_pid and op_pid:
+                    if p_pid == op_pid:
+                        return f"Игрок «{p_display}» (ID {p_pid}) уже включен в состав команды «{team_name}». Один игрок не может быть в составах двух разных команд на одной игре."
+                elif p_surname and p_name and p_surname == op_surname and p_name == op_name:
+                    return f"Игрок «{p_display}» уже включен в состав команды «{team_name}». Один игрок не может быть в составах двух разных команд на одной игре."
+
+    return None
+
+
 def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team_name, display_name, roster, town=None, team_index=None, target_user_id=None, registered_name=None, is_rep=False):
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
@@ -814,6 +874,10 @@ def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team
                     if team.get("user_id") == user_id:
                         matched_idx = idx
                         break
+
+        conflict_err = check_roster_conflicts(teams, roster, current_team_idx=matched_idx)
+        if conflict_err:
+            raise ValueError(conflict_err)
 
         if matched_idx is not None and 0 <= matched_idx < len(teams):
             team = teams[matched_idx]
