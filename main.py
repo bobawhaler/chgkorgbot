@@ -1,6 +1,7 @@
 import json
 import os
 import traceback
+import html
 from flask import Flask, request, render_template, jsonify, make_response
 import telegram_api
 import helpers
@@ -318,6 +319,9 @@ def api_miniapp_init():
                         "user_id": team_uid,
                         "username": t.get("username", ""),
                         "bot_started": team_bot_started,
+                        "rejection_comment": t.get("rejection_comment") or "",
+                        "reminders_count": t.get("reminders_count", 0),
+                        "last_reminder_ts": t.get("last_reminder_ts", 0),
                     }
                     teams_list.append(team_dict)
                     registrations.append({
@@ -396,7 +400,8 @@ def api_miniapp_init():
             "history_teams": hist_teams,
             "venue_teams": venue_teams,
             "can_switch_roles": can_switch_roles,
-            "active_test_role": active_test_role if is_admin else None
+            "active_test_role": active_test_role if is_admin else None,
+            "bot_username": helpers.get_bot_username()
         })
     except Exception as exc:
         import traceback
@@ -486,20 +491,24 @@ def api_miniapp_reject_roster():
 
         target_uid = int(target_uid_raw) if target_uid_raw and str(target_uid_raw).isdigit() else None
         t_index = int(team_idx) if team_idx is not None else None
+        comment = (data.get("comment") or "").strip()
 
-        reg_entity, rejected_tname = datastore.reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id=target_uid, team_index=t_index)
+        reg_entity, rejected_tname = datastore.reject_team_roster_in_ds(
+            chat_id, sync_req_id, target_user_id=target_uid, team_index=t_index, comment=comment
+        )
         tourn_name = reg_entity.get("tourn_name", "турнир") if reg_entity else "турнир"
         tname_str = rejected_tname or "вашей команды"
 
         if target_uid:
+            comment_block = f"\n\n<b>Комментарий представителя площадки:</b>\n<i>{html.escape(comment)}</i>" if comment else ""
             pm_msg = (
                 f"⚠️ <b>Запрос исправления состава от представителя площадки!</b>\n\n"
-                f"Представитель площадки вернул состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b> на доработку.\n\n"
+                f"Представитель площадки вернул состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b> на доработку.{comment_block}\n\n"
                 f"Пожалуйста, проверьте и скорректируйте состав по кнопке <b>«Составы»</b> или отправьте /roster в этот личный чат с ботом."
             )
             telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
 
-        return jsonify({"ok": True, "team_name": tname_str, "tourn_name": tourn_name})
+        return jsonify({"ok": True, "team_name": tname_str, "tourn_name": tourn_name, "comment": comment})
     except Exception as exc:
         print(f"Error in api_miniapp_reject_roster: {exc}")
         return jsonify({"error": f"Ошибка возврата состава: {exc}"}), 500
@@ -581,6 +590,14 @@ def api_miniapp_remind_roster():
             return jsonify({"error": "Действие доступно только представителям турнира"}), 403
 
         tourn_name = reg.get("tourn_name", "турнир")
+        mark_only = bool(data.get("mark_only"))
+        team_idx = data.get("team_index")
+        t_index = int(team_idx) if team_idx is not None else None
+
+        if mark_only:
+            datastore.increment_team_reminder_in_ds(chat_id, sync_req_id, target_user_id=target_uid, team_index=t_index)
+            return jsonify({"ok": True, "marked": True})
+
         pm_msg = (
             f"⏰ <b>Напоминание от представителя площадки!</b>\n\n"
             f"Представитель площадки запрашивает состав команды <b>\"{team_name}\"</b> на турнир <b>\"{tourn_name}\"</b>.\n\n"
@@ -588,9 +605,17 @@ def api_miniapp_remind_roster():
         )
         res = telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
         if res and res.ok:
+            datastore.mark_user_bot_started(target_uid)
+            datastore.increment_team_reminder_in_ds(chat_id, sync_req_id, target_user_id=target_uid, team_index=t_index)
             return jsonify({"ok": True, "sent": True})
         else:
-            return jsonify({"ok": False, "error": "Не удалось отправить сообщение пользователю"}), 400
+            if res and res.status_code == 403:
+                datastore.mark_user_bot_blocked(target_uid)
+            return jsonify({
+                "ok": False,
+                "bot_not_started": True,
+                "error": "Пользователь не запустил бота или заблокировал его. Бот не может отправить ему личное сообщение."
+            }), 200
     except Exception as exc:
         print(f"Error in api_miniapp_remind_roster: {exc}")
         return jsonify({"error": f"Ошибка отправки напоминания: {exc}"}), 500

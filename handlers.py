@@ -266,6 +266,17 @@ def system_tic_handler():
                         datastore.mark_user_bot_started(user_id)
                     elif pm_res and pm_res.status_code == 403:
                         datastore.mark_user_bot_blocked(user_id)
+                        rep_uid = reg.get("created_by_user_id")
+                        if rep_uid and rep_uid != user_id and rem_count == 0:
+                            username = t.get("username", "")
+                            user_contact = f"@{username}" if username else f"ID {user_id}"
+                            rep_warn = (
+                                f"⚠️ <b>Напоминание о сдаче состава не доставлено</b>\n\n"
+                                f"Знаток команды <b>«{team_name}»</b> ({user_contact}) на турнир <b>«{tourn_name}»</b> "
+                                f"еще не запускал бота, поэтому бот не может отправить ему личное сообщение.\n\n"
+                                f"Пожалуйста, отправьте ему напоминание в ЛС от своего имени."
+                            )
+                            telegram_api.send_message(rep_uid, None, rep_warn, formatted=True)
                     t["reminders_count"] = rem_count + 1
                     t["last_reminder_ts"] = now_ts
                     updated_teams = True
@@ -763,8 +774,7 @@ def command_handler(body):
                             if collect_rosters and user_id and not datastore.has_user_started_bot(user_id):
                                 bot_username = helpers.get_bot_username()
                                 link_url = f"https://t.me/{bot_username}?start=roster_{reg.get('sync_req_id')}_{chat_id}"
-                                user_mention = f"@{username}" if username else user_disp
-                                prompt_text = f"{user_mention}, состав можно сдать через <a href=\"{link_url}\">бота в ЛС</a>"
+                                prompt_text = helpers.get_random_roster_prompt(link_url)
                                 thread_id = body["message"].get("message_thread_id") or reg.get("thread_id")
                                 telegram_api.send_message(
                                     chat_id,

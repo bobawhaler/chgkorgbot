@@ -827,6 +827,14 @@
           <div id="repRosterActionButtons" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
         </div>
 
+        <!-- Rejection Notice Card -->
+        <div id="rosterRejectionNoticeBox" class="card" style="display: none; background: rgba(255, 193, 7, 0.12); border: 1px solid rgba(255, 193, 7, 0.4); border-left: 4px solid #ffb300; margin-bottom: 12px; padding: 12px 14px;">
+          <div style="font-size: 13px; font-weight: 700; color: #b78103; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+            <span>⚠️ Состав возвращен на доработку</span>
+          </div>
+          <div id="rosterRejectionNoticeText" style="font-size: 13px; color: var(--text-color); line-height: 1.4;"></div>
+        </div>
+
         <!-- Team Details Card -->
         <div class="card" style="margin-bottom: 14px; padding: 14px 16px;">
           
@@ -1032,6 +1040,54 @@
     </div>
   </div>
 
+  <!-- Modal: Reject Roster with Comment -->
+  <div class="modal-overlay" id="modalRejectComment">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title">↩️ Возврат на доработку</div>
+        <button class="modal-close" onclick="closeModal('modalRejectComment')">&#10005;</button>
+      </div>
+      <div id="rejectModalTeamInfo" style="font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--text-color);"></div>
+      <div style="font-size: 13px; color: var(--hint-color); margin-bottom: 12px; line-height: 1.4;">
+        Представителю команды будет отправлено личное сообщение в Telegram с вашим комментарием.
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="rejectCommentInput">Что именно не устроило (комментарий):</label>
+        <textarea class="form-input" id="rejectCommentInput" rows="3" style="resize: vertical; font-family: inherit; font-size: 13px;" placeholder="Например: в составе 7 игроков, укажите легионеров или базовый состав..."></textarea>
+      </div>
+      <div style="display: flex; gap: 8px; margin-top: 14px;">
+        <button class="btn btn-secondary" style="flex: 1;" onclick="closeModal('modalRejectComment')">Отмена</button>
+        <button class="btn btn-block" style="flex: 2; background: var(--danger-color); color: #fff;" onclick="submitRejectComment()">Вернуть состав</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Direct Personal Reminder -->
+  <div class="modal-overlay" id="modalDirectRemind">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title">💬 Напоминание в ЛС</div>
+        <button class="modal-close" onclick="closeModal('modalDirectRemind')">&#10005;</button>
+      </div>
+      <div style="background: rgba(255, 152, 0, 0.12); border: 1px solid rgba(255, 152, 0, 0.3); border-radius: 8px; padding: 10px 12px; font-size: 13px; color: #b78103; margin-bottom: 12px; line-height: 1.4;">
+        ⚠️ Знаток еще не запускал бота или заблокировал его. Бот не может отправить ему сообщение автоматически. Пожалуйста, отправьте напоминание в ЛС от своего имени.
+      </div>
+      <div id="directRemindContactInfo" style="font-size: 14px; margin-bottom: 10px; color: var(--text-color);"></div>
+      <div class="form-group">
+        <label class="form-label" for="directRemindTextInput">Готовый текст сообщения:</label>
+        <textarea class="form-input" id="directRemindTextInput" rows="4" style="resize: vertical; font-family: inherit; font-size: 13px;"></textarea>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 14px;">
+        <button class="btn btn-primary btn-block" onclick="copyAndOpenDirectChat()">
+          📋 Скопировать и открыть диалог в Telegram
+        </button>
+        <button class="btn btn-secondary btn-block btn-sm" onclick="markDirectReminderSent()">
+          ✅ Отметить как отправленное
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast">Сохранено</div>
 
   <script>
@@ -1174,7 +1230,9 @@
         const uid = unsafeUser?.id || null;
         const targetRole = appData.canSwitchRoles ? (overrideRole || appData.activeTestRole || "") : "";
 
-        updateStatus(`Запрос данных с сервера (User ID: ${uid || "нет"})...`);
+        const userNick = unsafeUser?.username ? `@${unsafeUser.username}` : (unsafeUser?.first_name ? [unsafeUser.first_name, unsafeUser.last_name].filter(Boolean).join(" ") : "");
+        const userSuffix = userNick ? ` (${userNick})` : "";
+        updateStatus(`Запрос данных с сервера${userSuffix}...`);
 
         const resp = await fetch("/api/miniapp/init", {
           method: "POST",
@@ -1202,7 +1260,12 @@
 
         updateStatus("Обработка профиля и списка турниров...");
 
-        appData.user = data.user;
+        appData.user = data.user || {};
+        appData.userMapping = data.user_mapping || null;
+        if (appData.user) {
+          appData.user.mapping = data.user_mapping || null;
+        }
+        appData.botUsername = data.bot_username || "gamepollbot";
         appData.tournaments = data.tournaments || [];
         appData.registrations = data.registrations || [];
         appData.historyTeams = data.history_teams || [];
@@ -1280,6 +1343,23 @@
       const container = document.getElementById("tournamentsList");
       if (!container) return;
       try {
+        const guestPromptCard = (!appData.userMapping) ? `
+          <div class="card" style="background: linear-gradient(135deg, rgba(36, 129, 204, 0.08) 0%, rgba(36, 129, 204, 0.02) 100%); border: 1px solid rgba(36, 129, 204, 0.25); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;">
+            <div style="display: flex; gap: 12px; align-items: flex-start;">
+              <div style="font-size: 26px; line-height: 1;">🌟</div>
+              <div style="flex: 1;">
+                <div style="font-weight: 700; font-size: 15px; margin-bottom: 4px; color: var(--text-color);">Привяжите свой профиль рейтинга</div>
+                <div style="font-size: 13px; color: var(--hint-color); line-height: 1.4; margin-bottom: 10px;">
+                  Привязка вашего ID на сайте рейтинга открывает дополнительные возможности: автоматическое добавление в составы команд, доступ к управлению турнирами площадки (если вы указаны представителем) и быстрый доступ к вашей истории игр.
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="openProfileModal()" style="font-weight: 600;">
+                  🔍 Найти и привязать профиль
+                </button>
+              </div>
+            </div>
+          </div>
+        ` : "";
+
         const hasTournaments = appData.tournaments && appData.tournaments.length > 0;
         if (!hasTournaments) {
           let emptyText = "Нет активных турниров с включенным сбором составов.<br>Зарегистрируйте команду в чате, где включен сбор составов.";
@@ -1299,6 +1379,7 @@
             }
           }
           container.innerHTML = `
+            ${guestPromptCard}
             <div class="empty-state">
               <div class="empty-icon">&#127942;</div>
               <div class="empty-text">${emptyText}</div>
@@ -1350,6 +1431,12 @@
             const townInfo = t.town ? ` • 🏙 ${escapeHtml(t.town)}` : "";
             const contactInfo = t.username ? ` • 👤 @${escapeHtml(t.username)}` : (t.user_id ? ` • 👤 ID ${t.user_id}` : "");
 
+            const rejCommentHtml = (t.rejection_comment && !isSub) ? `
+              <div style="margin-top: 6px; font-size: 12px; color: #b78103; background: rgba(255, 193, 7, 0.12); border-left: 3px solid #ffb300; padding: 6px 10px; border-radius: 4px; line-height: 1.35;">
+                <b>Причина возврата:</b> ${escapeHtml(t.rejection_comment)}
+              </div>
+            ` : "";
+
             let actionButtons = `
               <button class="btn btn-secondary btn-sm" style="flex: 1; min-width: 85px; padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 8px;" onclick="event.stopPropagation(); selectTournamentTeam(${tournIndex}, ${tIndex})">
                 ✏️ Состав
@@ -1369,11 +1456,19 @@
                 </button>
               `;
               if (t.user_id) {
-                actionButtons += `
-                  <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--link-color); border-color: rgba(36, 129, 204, 0.4);" onclick="event.stopPropagation(); remindTeamRoster(${tournIndex}, ${tIndex})">
-                    🔔 Напомнить
-                  </button>
-                `;
+                if (t.bot_started === false) {
+                  actionButtons += `
+                    <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: #e65100; border-color: rgba(255, 152, 0, 0.5);" onclick="event.stopPropagation(); openDirectRemindModal(${tournIndex}, ${tIndex})">
+                      💬 В ЛС
+                    </button>
+                  `;
+                } else {
+                  actionButtons += `
+                    <button class="btn btn-outline btn-sm" style="padding: 6px 10px; font-size: 12px; border-radius: 8px; color: var(--link-color); border-color: rgba(36, 129, 204, 0.4);" onclick="event.stopPropagation(); remindTeamRoster(${tournIndex}, ${tIndex})">
+                      🔔 Напомнить
+                    </button>
+                  `;
+                }
               }
             }
 
@@ -1401,6 +1496,7 @@
                 <div class="tourn-team-sub">
                   ${baseInfo}${townInfo}${contactInfo}
                 </div>
+                ${rejCommentHtml}
                 <div class="tourn-team-actions">
                   ${actionButtons}
                 </div>
@@ -1432,10 +1528,16 @@
         function renderPlayerTournHtml(tourn, tournIndex) {
           let res = "";
           (tourn.teams || []).forEach((t, tIndex) => {
-            const isSub = t.roster_submitted || (t.roster && t.roster.length > 0);
-            const statusBadge = isSub
-              ? `<span class="badge badge-success">&#128994; Состав сдан (${t.roster.length} чел.)</span>`
-              : `<span class="badge badge-danger">&#128308; Состав НЕ сдан</span>`;
+            const isSub = Boolean(t.roster_submitted);
+            const hasRoster = Boolean(t.roster && t.roster.length > 0);
+            let statusBadge = "";
+            if (isSub) {
+              statusBadge = `<span class="badge badge-success">&#128994; Состав сдан (${t.roster ? t.roster.length : 0} чел.)</span>`;
+            } else if (hasRoster) {
+              statusBadge = `<span class="badge badge-warning">&#128993; На доработке</span>`;
+            } else {
+              statusBadge = `<span class="badge badge-danger">&#128308; Состав НЕ сдан</span>`;
+            }
 
             const teamDisplayName = t.display_name || t.team_name || "Команда";
             let metaHtml = "";
@@ -1445,6 +1547,12 @@
             if (t.town) {
               metaHtml += `<span>• 🏙 ${escapeHtml(t.town)}</span>`;
             }
+
+            const commentHtml = (t.rejection_comment && !isSub) ? `
+              <div style="margin-top: 8px; font-size: 13px; color: #b78103; background: rgba(255, 193, 7, 0.12); border-left: 3px solid #ffb300; padding: 6px 10px; border-radius: 4px; line-height: 1.35;">
+                <b>Замечания организатора:</b><br>${escapeHtml(t.rejection_comment)}
+              </div>
+            ` : "";
 
             res += `
               <div class="reg-item" onclick="selectTournamentTeam(${tournIndex}, ${tIndex})">
@@ -1456,6 +1564,7 @@
                   <span>👥</span> <b>${escapeHtml(teamDisplayName)}</b>
                 </div>
                 ${metaHtml ? `<div class="reg-meta">${metaHtml}</div>` : ""}
+                ${commentHtml}
                 <button class="btn btn-secondary btn-block btn-sm" style="margin-top: 10px;" onclick="event.stopPropagation(); selectTournamentTeam(${tournIndex}, ${tIndex})">
                   ✏️ ${isSub ? "Изменить состав" : "Заполнить состав"}
                 </button>
@@ -1516,7 +1625,7 @@
           }
         }
 
-        container.innerHTML = html;
+        container.innerHTML = guestPromptCard + html;
       } catch (renderErr) {
         console.error("renderTournamentsList error:", renderErr);
         container.innerHTML = `
@@ -1626,17 +1735,37 @@
       }
     }
 
-    async function rejectTeamRoster(tournIndex, teamIndex) {
+    function openRejectCommentModal(tournIndex, teamIndex) {
       haptic("impact", "medium");
       const tourn = appData.tournaments[tournIndex];
       if (!tourn) return;
       const team = (tourn.teams || [])[teamIndex];
       if (!team) return;
 
+      appData.pendingReject = { tournIndex, teamIndex };
+      const teamName = team.display_name || team.team_name || "Команда";
+      const infoEl = document.getElementById("rejectModalTeamInfo");
+      if (infoEl) infoEl.innerText = `Команда: «${teamName}»`;
+      const inputEl = document.getElementById("rejectCommentInput");
+      if (inputEl) inputEl.value = team.rejection_comment || "";
+      openModal("modalRejectComment");
+    }
+
+    async function submitRejectComment() {
+      if (!appData.pendingReject) return;
+      const { tournIndex, teamIndex } = appData.pendingReject;
+      const comment = (document.getElementById("rejectCommentInput")?.value || "").trim();
+      closeModal("modalRejectComment");
+      await executeRejectRoster(tournIndex, teamIndex, comment);
+    }
+
+    async function executeRejectRoster(tournIndex, teamIndex, comment = "") {
+      const tourn = appData.tournaments[tournIndex];
+      if (!tourn) return;
+      const team = (tourn.teams || [])[teamIndex];
+      if (!team) return;
+
       const teamName = team.display_name || team.team_name || "команды";
-      if (!confirm(`Вернуть состав команды «${teamName}» на доработку?\nПредставителю команды будет отправлено уведомление в Telegram.`)) {
-        return;
-      }
 
       try {
         showToast("Возврат состава на доработку...");
@@ -1649,6 +1778,7 @@
           chat_id: tourn.chat_id,
           target_user_id: team.user_id,
           team_index: teamIndex,
+          comment: comment,
           user_id: uid,
           initData: initDataRaw
         };
@@ -1666,13 +1796,144 @@
 
         team.roster_submitted = false;
         team.submitted_externally = false;
+        team.rejection_comment = comment;
+        if (appData.currentTeamRef && appData.currentTeamRef === team) {
+          appData.currentTeamRef.rejection_comment = comment;
+          appData.currentTeamRef.roster_submitted = false;
+          appData.currentTeamRef.submitted_externally = false;
+        }
+
         haptic("notification", "success");
         showToast(`↩️ Состав «${teamName}» возвращен на доработку!`);
         renderTournamentsList();
+        updateRosterScreenHeader();
       } catch (err) {
         console.error("Reject roster error:", err);
         haptic("notification", "error");
         alert("Не удалось вернуть состав: " + err.message);
+      }
+    }
+
+    function rejectTeamRoster(tournIndex, teamIndex) {
+      openRejectCommentModal(tournIndex, teamIndex);
+    }
+
+    function openDirectRemindModal(tournIndex, teamIndex) {
+      haptic("impact", "medium");
+      const tourn = appData.tournaments[tournIndex];
+      if (!tourn) return;
+      const team = (tourn.teams || [])[teamIndex];
+      if (!team) return;
+
+      appData.pendingDirectRemind = { tournIndex, teamIndex };
+      const teamName = team.display_name || team.team_name || "Команда";
+      const tournName = tourn.tourn_name || "турнир";
+      const username = team.username ? team.username.replace(/^@/, '') : '';
+      const botUsername = appData.botUsername || "gamepollbot";
+      const linkUrl = `https://t.me/${botUsername}?start=roster_${tourn.sync_req_id}_${tourn.chat_id}`;
+
+      const contactEl = document.getElementById("directRemindContactInfo");
+      if (contactEl) {
+        if (username) {
+          contactEl.innerHTML = `Представитель команды: <b>@${escapeHtml(username)}</b>`;
+        } else if (team.user_id) {
+          contactEl.innerHTML = `Представитель команды: <b>ID ${team.user_id}</b>`;
+        } else {
+          contactEl.innerHTML = `Команда: «${escapeHtml(teamName)}»`;
+        }
+      }
+
+      const defaultText = `Привет! Напоминаю о необходимости сдать состав команды «${teamName}» на турнир «${tournName}».\n\nЗаполнить состав можно через бота: ${linkUrl}`;
+      const textEl = document.getElementById("directRemindTextInput");
+      if (textEl) textEl.value = defaultText;
+
+      openModal("modalDirectRemind");
+    }
+
+    function openDirectRemindModalForCurrentTeam() {
+      if (!appData.currentTourn || !appData.currentTeamRef) return;
+      const tournIndex = appData.tournaments.findIndex(t => t.sync_req_id === appData.currentTourn.sync_req_id && String(t.chat_id) === String(appData.currentTourn.chat_id));
+      const teamIndex = (appData.currentTourn.teams || []).indexOf(appData.currentTeamRef);
+      if (tournIndex !== -1 && teamIndex !== -1) {
+        openDirectRemindModal(tournIndex, teamIndex);
+      }
+    }
+
+    async function copyAndOpenDirectChat() {
+      if (!appData.pendingDirectRemind) return;
+      const { tournIndex, teamIndex } = appData.pendingDirectRemind;
+      const tourn = appData.tournaments[tournIndex];
+      const team = (tourn?.teams || [])[teamIndex];
+      const text = document.getElementById("directRemindTextInput")?.value || "";
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          showToast("📋 Текст скопирован в буфер обмена!");
+        }
+      } catch (e) {
+        console.warn("Clipboard write error:", e);
+      }
+
+      markDirectReminderSent(false);
+      closeModal("modalDirectRemind");
+
+      const username = team?.username ? team.username.replace(/^@/, '') : '';
+      if (username) {
+        const tgLink = `https://t.me/${username}`;
+        if (tg?.openTelegramLink) {
+          tg.openTelegramLink(tgLink);
+        } else {
+          window.open(tgLink, "_blank");
+        }
+      } else if (team?.user_id) {
+        const tgLink = `tg://user?id=${team.user_id}`;
+        if (tg?.openTelegramLink) {
+          tg.openTelegramLink(tgLink);
+        } else {
+          window.open(tgLink, "_blank");
+        }
+      } else {
+        alert("У этой команды не указан контакт представителя в Telegram");
+      }
+    }
+
+    async function markDirectReminderSent(shouldCloseModal = true) {
+      if (!appData.pendingDirectRemind) return;
+      const { tournIndex, teamIndex } = appData.pendingDirectRemind;
+      const tourn = appData.tournaments[tournIndex];
+      const team = (tourn?.teams || [])[teamIndex];
+      if (!team) return;
+
+      try {
+        const initDataRaw = tg?.initData || "";
+        const unsafeUser = tg?.initDataUnsafe?.user;
+        const uid = appData.user?.id || unsafeUser?.id || "";
+
+        await fetch("/api/miniapp/remind_roster", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sync_req_id: tourn.sync_req_id,
+            chat_id: tourn.chat_id,
+            target_user_id: team.user_id,
+            team_index: teamIndex,
+            mark_only: true,
+            user_id: uid,
+            initData: initDataRaw
+          })
+        });
+
+        team.reminders_count = (team.reminders_count || 0) + 1;
+        team.last_reminder_ts = Math.floor(Date.now() / 1000);
+        if (shouldCloseModal) {
+          closeModal("modalDirectRemind");
+          showToast("✅ Отметка о напоминании сохранена");
+          renderTournamentsList();
+          updateRosterScreenHeader();
+        }
+      } catch (err) {
+        console.warn("markDirectReminderSent error:", err);
       }
     }
 
@@ -1719,6 +1980,7 @@
 
         team.roster_submitted = external;
         team.submitted_externally = external;
+        if (external) team.rejection_comment = "";
         haptic("notification", "success");
         showToast(external ? `✅ Состав «${teamName}» отмечен как сданный!` : `Отметка для «${teamName}» снята.`);
         renderTournamentsList();
@@ -1739,6 +2001,11 @@
         return;
       }
 
+      if (team.bot_started === false) {
+        openDirectRemindModal(tournIndex, teamIndex);
+        return;
+      }
+
       const teamName = team.display_name || team.team_name || "команды";
       if (!confirm(`Отправить напоминание о сдаче состава представителю команды «${teamName}» в Telegram?`)) {
         return;
@@ -1755,6 +2022,7 @@
           chat_id: tourn.chat_id,
           target_user_id: team.user_id,
           team_name: teamName,
+          team_index: teamIndex,
           user_id: uid,
           initData: initDataRaw
         };
@@ -1766,10 +2034,20 @@
         });
 
         const data = await resp.json();
+        if (data.bot_not_started) {
+          team.bot_started = false;
+          renderTournamentsList();
+          updateRosterScreenHeader();
+          openDirectRemindModal(tournIndex, teamIndex);
+          return;
+        }
+
         if (!resp.ok || !data.ok) {
           throw new Error(data.error || "Ошибка при отправке напоминания");
         }
 
+        team.reminders_count = (team.reminders_count || 0) + 1;
+        team.last_reminder_ts = Math.floor(Date.now() / 1000);
         haptic("notification", "success");
         showToast(`🔔 Напоминание отправлено представителю «${teamName}»!`);
       } catch (err) {
@@ -1784,8 +2062,7 @@
       const tournIndex = appData.tournaments.findIndex(t => t.sync_req_id === appData.currentTourn.sync_req_id && String(t.chat_id) === String(appData.currentTourn.chat_id));
       const teamIndex = (appData.currentTourn.teams || []).indexOf(appData.currentTeamRef);
       if (tournIndex !== -1 && teamIndex !== -1) {
-        await rejectTeamRoster(tournIndex, teamIndex);
-        updateRosterScreenHeader();
+        openRejectCommentModal(tournIndex, teamIndex);
       }
     }
 
@@ -1845,7 +2122,18 @@
         const idBadge = appData.currentRatingTeamId ? `Рейтинг ID: ${appData.currentRatingTeamId}` : "Вне рейтинга";
         document.getElementById("currentBaseTeamIdBadge").innerText = idBadge;
 
-        document.getElementById("currentTeamDisplayName").innerText = appData.currentDisplayName || appData.currentTeamName || "Совпадает с базовым";
+        // Rejection notice check
+        const rejNoticeBox = document.getElementById("rosterRejectionNoticeBox");
+        const rejNoticeText = document.getElementById("rosterRejectionNoticeText");
+        const curTeam = appData.currentTeamRef;
+        if (rejNoticeBox && rejNoticeText) {
+          if (curTeam && curTeam.rejection_comment && !curTeam.roster_submitted) {
+            rejNoticeBox.style.display = "block";
+            rejNoticeText.innerHTML = `<b>Замечания организатора:</b><br>${escapeHtml(curTeam.rejection_comment)}`;
+          } else {
+            rejNoticeBox.style.display = "none";
+          }
+        }
 
         // Representative Actions Box
         const repBox = document.getElementById("repRosterActionBox");
@@ -1875,11 +2163,19 @@
                 </button>
               `;
               if (team.user_id) {
-                btns += `
-                  <button class="btn btn-outline btn-sm" style="color: var(--link-color); border-color: rgba(36, 129, 204, 0.4); border-radius: 8px;" onclick="remindCurrentTeamRoster()">
-                    🔔 Напомнить в Telegram
-                  </button>
-                `;
+                if (team.bot_started === false) {
+                  btns += `
+                    <button class="btn btn-outline btn-sm" style="color: #e65100; border-color: rgba(255, 152, 0, 0.5); border-radius: 8px;" onclick="openDirectRemindModalForCurrentTeam()">
+                      💬 Написать в ЛС (бот не запущен)
+                    </button>
+                  `;
+                } else {
+                  btns += `
+                    <button class="btn btn-outline btn-sm" style="color: var(--link-color); border-color: rgba(36, 129, 204, 0.4); border-radius: 8px;" onclick="remindCurrentTeamRoster()">
+                      🔔 Напомнить в Telegram
+                    </button>
+                  `;
+                }
               }
             }
             if (isExt) {
@@ -2819,6 +3115,7 @@
           appData.currentTeamRef.roster = appData.currentRoster;
           appData.currentTeamRef.roster_submitted = true;
           appData.currentTeamRef.submitted_externally = false;
+          appData.currentTeamRef.rejection_comment = "";
         }
 
         if (appData.currentReg && appData.currentReg.team) {
@@ -2829,6 +3126,7 @@
           appData.currentReg.team.roster = appData.currentRoster;
           appData.currentReg.team.roster_submitted = true;
           appData.currentReg.team.submitted_externally = false;
+          appData.currentReg.team.rejection_comment = "";
         }
 
         setTimeout(() => {

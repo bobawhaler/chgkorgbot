@@ -891,6 +891,8 @@ def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team
                 team["town"] = town
             team["roster"] = roster
             team["roster_submitted"] = bool(roster and len(roster) > 0)
+            if team["roster_submitted"]:
+                team["rejection_comment"] = None
             team["submitted_externally"] = False
             team["submitted_at"] = datetime.datetime.now(pytz.utc).isoformat()
         else:
@@ -934,7 +936,31 @@ def reset_unsubmitted_reminders(chat_id, sync_req_id):
         return entity, notified_users
 
 
-def reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id=None, team_index=None):
+def increment_team_reminder_in_ds(chat_id, sync_req_id, target_user_id=None, team_index=None):
+    datastore_client = get_datastore_client()
+    key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+    now_ts = int(time.time())
+    with datastore_client.transaction():
+        entity = datastore_client.get(key)
+        if not entity:
+            return None
+        teams = list(entity.get("teams", []))
+        for idx, team in enumerate(teams):
+            match = False
+            if team_index is not None and idx == team_index:
+                match = True
+            elif target_user_id and team.get("user_id") == target_user_id:
+                match = True
+            if match:
+                team["reminders_count"] = team.get("reminders_count", 0) + 1
+                team["last_reminder_ts"] = now_ts
+                break
+        entity["teams"] = teams
+        datastore_client.put(entity)
+        return entity
+
+
+def reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id=None, team_index=None, comment=None):
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
     with datastore_client.transaction():
@@ -954,6 +980,7 @@ def reject_team_roster_in_ds(chat_id, sync_req_id, target_user_id=None, team_ind
                 team["submitted_externally"] = False
                 team["reminders_count"] = 0
                 team["last_reminder_ts"] = 0
+                team["rejection_comment"] = comment.strip() if comment and str(comment).strip() else None
                 rejected_team_name = team.get("display_name") or team.get("team_name", "Команда")
                 break
         entity["teams"] = teams
@@ -979,6 +1006,8 @@ def mark_team_roster_submitted_in_ds(chat_id, sync_req_id, target_user_id=None, 
             if match:
                 team["roster_submitted"] = bool(submitted)
                 team["submitted_externally"] = bool(submitted and external)
+                if submitted:
+                    team["rejection_comment"] = None
                 updated_team_name = team.get("display_name") or team.get("team_name", "Команда")
                 break
         entity["teams"] = teams
