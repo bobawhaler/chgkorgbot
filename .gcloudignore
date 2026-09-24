@@ -6,4 +6,4 @@ Pipenv
 Pipfile
 venv/
 .venv/
-docs.json
+tests/

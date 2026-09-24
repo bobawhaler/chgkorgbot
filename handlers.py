@@ -42,10 +42,10 @@ def build_help_text(chat_id, is_private=True):
         sections.append(tourn_help)
         roster_help_lines = []
         if collect_rosters:
-            roster_help_lines.append("• Кнопка <b>«Составы»</b> внизу экрана (или <code>/roster</code>, <code>/myteams</code>) — приложение для сдачи и управления составами")
+            roster_help_lines.append("• Кнопка <b>«Составы»</b> внизу экрана (или <code>/roster</code>, <code>/myteams</code>) — форма для сдачи и управления составами")
         roster_help_lines.append("• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга")
         if collect_rosters:
-            roster_help_lines.append("• <code>/setmyid &lt;ID_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка профиля на сайте рейтинга (также доступна в приложении)")
+            roster_help_lines.append("• <code>/setmyid &lt;ID_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка профиля на сайте рейтинга (также доступна в разделе «Составы»)")
         sections.append("<b>Управление составами команд:</b>\n" + "\n".join(roster_help_lines))
         sections.append(
             "<b>Настройки:</b>\n"
@@ -259,7 +259,7 @@ def system_tic_handler():
                         f"⏰ <b>Напоминание о сдаче состава!</b>\n\n"
                         f"Наступило время турнира <b>\"{tourn_name}\"</b>.\n"
                         f"Пожалуйста, сдайте состав вашей команды <b>\"{team_name}\"</b>.\n\n"
-                        f"Откройте приложение по кнопке <b>«Составы»</b> внизу экрана или отправьте /roster в этот личный чат с ботом."
+                        f"Нажмите кнопку <b>«Составы»</b> внизу экрана или отправьте /roster в этот личный чат с ботом."
                     )
                     pm_res = telegram_api.send_message(user_id, None, msg_text, formatted=True)
                     if pm_res and pm_res.ok:
@@ -298,7 +298,7 @@ def handle_callback_query(cq):
     if cq_id:
         telegram_api.answer_callback_query(
             cq_id,
-            text="Сдача и управление составами команд выполняются через приложение «Составы» внизу экрана.",
+            text="Сдача и управление составами команд выполняются по кнопке «Составы» внизу экрана.",
             show_alert=True
         )
 
@@ -376,7 +376,7 @@ def handle_export_roster(chat_id, thread_id=None):
                 lines.append(f"   Ответственный: {u_disp}")
 
         lines.append("")
-        lines.append("<i>Управление составами, напоминания и возврат на доработку доступны в приложении «Составы».</i>")
+        lines.append("<i>Управление составами, напоминания и возврат на доработку доступны в разделе «Составы».</i>")
         telegram_api.send_message(chat_id, thread_id, "\n".join(lines), formatted=True)
 
         if teams and any(t.get("roster") or t.get("roster_submitted") for t in teams):
@@ -479,7 +479,7 @@ def handle_private_message(body):
         group_chat_id = chat_id
         datastore.add_team_registration(group_chat_id, None, sync_req_id, 999999, "Тестовый кубок сообщества", "Представитель: Тест", "Ведущий: Тест", "19:00")
         datastore.register_team_in_ds(group_chat_id, sync_req_id, "Тестовые знатоки", user_id, "user")
-        telegram_api.send_message(chat_id, None, "Тестовый турнир создан. Откройте приложение «Составы» для ввода состава.")
+        telegram_api.send_message(chat_id, None, "Тестовый турнир создан. Откройте раздел «Составы» для ввода состава.")
         return True
 
     if text.startswith("/start"):
@@ -496,7 +496,7 @@ def handle_private_message(body):
                 telegram_api.send_message(
                     chat_id,
                     None,
-                    f"Для ввода и редактирования состава команды{tourn_str} откройте приложение по кнопке <b>«Составы»</b> внизу экрана рядом со строкой ввода.",
+                    f"Для ввода и редактирования состава команды{tourn_str} нажмите кнопку <b>«Составы»</b> внизу экрана рядом со строкой ввода.",
                     formatted=True,
                 )
                 return True
@@ -515,7 +515,7 @@ def handle_private_message(body):
     if text.startswith("/") or text.lower() in ("отмена", "cancel", "stop", "назад"):
         if text in ("/cancel", "/stop") or text.lower() in ("отмена", "cancel", "stop", "назад"):
             datastore.clear_user_state(user_id)
-            telegram_api.send_message(chat_id, None, "❌ <b>Действие отменено.</b>\n<i>Для сдачи составов используйте приложение «Составы».</i>", formatted=True)
+            telegram_api.send_message(chat_id, None, "❌ <b>Действие отменено.</b>\n<i>Для сдачи составов используйте кнопку «Составы» внизу экрана.</i>", formatted=True)
             return True
         elif text.startswith("/"):
             datastore.clear_user_state(user_id)
@@ -564,9 +564,9 @@ def handle_private_message(body):
         if mapping and mapping.get("rating_player_id"):
             fio = f"{mapping.get('surname')} {mapping.get('name')} {mapping.get('patronymic', '')}".strip()
             town_str = f" ({mapping['town']})" if mapping.get("town") else ""
-            telegram_api.send_message(chat_id, None, f"👤 <b>Ваш привязанный профиль сайта рейтинга:</b>\n\n[ID {mapping['rating_player_id']}] <b>{fio}</b>{town_str}\n\n<i>Для смены отправьте <code>/setmyid <новое ID или ФИО></code> или привяжите в приложении «Составы».</i>", formatted=True)
+            telegram_api.send_message(chat_id, None, f"👤 <b>Ваш привязанный профиль сайта рейтинга:</b>\n\n[ID {mapping['rating_player_id']}] <b>{fio}</b>{town_str}\n\n<i>Для смены отправьте <code>/setmyid <новое ID или ФИО></code> или привяжите в разделе «Составы».</i>", formatted=True)
         else:
-            telegram_api.send_message(chat_id, None, "У вас пока не привязан профиль сайта рейтинга.\n\nОтправьте <code>/setmyid <ваш ID рейтинга или ФИО></code> или привяжите в приложении «Составы».", formatted=True)
+            telegram_api.send_message(chat_id, None, "У вас пока не привязан профиль сайта рейтинга.\n\nОтправьте <code>/setmyid <ваш ID рейтинга или ФИО></code> или привяжите в разделе «Составы».", formatted=True)
         return True
 
     if text in ("/myteams", "/roster", "/miniapp", "/app"):
@@ -574,7 +574,7 @@ def handle_private_message(body):
         telegram_api.send_message(
             chat_id,
             None,
-            "Для ввода и управления составами ваших команд откройте приложение по кнопке <b>«Составы»</b> в левом нижнем углу рядом со строкой ввода.",
+            "Для ввода и управления составами ваших команд нажмите кнопку <b>«Составы»</b> в левом нижнем углу рядом со строкой ввода.",
             formatted=True,
         )
         return True
@@ -1009,7 +1009,7 @@ def command_handler(body):
                     telegram_api.send_message(
                         chat_id,
                         thread_id,
-                        f"🎭 <b>Режим тестирования роли изменен:</b>\n{label}\n\n<i>Откройте или обновите Mini App для проверки.</i>",
+                        f"🎭 <b>Режим тестирования роли изменен:</b>\n{label}\n\n<i>Откройте или обновите раздел «Составы» для проверки.</i>",
                         formatted=True,
                     )
                 else:

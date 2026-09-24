@@ -15,6 +15,8 @@ API_URL = "https://api.rating.chgk.info"
 # Max itemsPerPage per endpoint (from API docs / OpenAPI spec)
 _TOURNAMENTS_ITEMS_PER_PAGE = 512
 _VENUES_REQUESTS_ITEMS_PER_PAGE = 30
+# Tournament types: 3 = Синхрон, 6 = Строго синхронный, 8 = Асинхрон
+_TOURNAMENT_TYPES = [3, 6, 8]
 
 
 def _fetch_paginated(url_base, params, items_per_page):
@@ -196,7 +198,7 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
             "dateStart[before]": to_date,
             "dateStart[after]": from_date,
             "dateEnd[after]": to_date,
-            "type[]": [3, 8],
+            "type[]": _TOURNAMENT_TYPES,
         }
     else:
         to_date = tourn_date.strftime("%Y-%m-%d")
@@ -204,7 +206,7 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
             "dateStart[before]": f"{to_date} 23:59",
             "dateStart[after]": from_date,
             "dateEnd[after]": f"{to_date} 23:59",
-            "type[]": [3, 8],
+            "type[]": _TOURNAMENT_TYPES,
         }
 
     req = requests.Request("GET", f"{API_URL}/tournaments", params=params)

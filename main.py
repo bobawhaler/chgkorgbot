@@ -808,7 +808,7 @@ def api_miniapp_save_roster():
     town_info = f"Город: <b>{town}</b>" if town else "Город: <i>не указан</i>"
 
     lines = [
-        f"✅ <b>Состав команды «{display_name}» сохранен через Mini App!</b>\n",
+        f"✅ <b>Состав команды «{display_name}» успешно сохранен!</b>\n",
         team_info,
         town_info,
         "",
