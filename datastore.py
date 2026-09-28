@@ -1432,6 +1432,48 @@ def mark_user_bot_blocked(user_id):
         print(f"Error saving UserBotStatus (blocked) for user_id={user_id}: {e}")
 
 
+def get_user_registration_reminders_count(user_id):
+    if not user_id:
+        return 0
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("UserBotStatus", str(user_id))
+        entity = datastore_client.get(key)
+        if entity:
+            return int(entity.get("registration_reminders_count", 0))
+    except Exception as e:
+        print(f"Error getting registration_reminders_count for user_id={user_id}: {e}")
+    return 0
+
+
+def increment_user_registration_reminders_count(user_id, username=""):
+    if not user_id:
+        return 0
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("UserBotStatus", str(user_id))
+        with datastore_client.transaction():
+            entity = datastore_client.get(key)
+            if not entity:
+                entity = datastore.Entity(key=key)
+                entity.update({
+                    "user_id": int(user_id),
+                    "started": False,
+                    "username": username,
+                    "registration_reminders_count": 0,
+                })
+            count = int(entity.get("registration_reminders_count", 0)) + 1
+            entity["registration_reminders_count"] = count
+            if username:
+                entity["username"] = username
+            entity["updated_at"] = datetime.datetime.now(pytz.utc)
+            datastore_client.put(entity)
+            return count
+    except Exception as e:
+        print(f"Error incrementing registration_reminders_count for user_id={user_id}: {e}")
+        return 0
+
+
 # --- Venue Data & Sync State Persistence ---
 
 def get_venue_sync_state(venue_id):

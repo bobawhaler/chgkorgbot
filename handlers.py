@@ -772,17 +772,19 @@ def command_handler(body):
                             telegram_api.set_message_reaction(chat_id, body["message"]["message_id"], "❤️")
 
                             if collect_rosters and user_id and not datastore.has_user_started_bot(user_id):
-                                bot_username = helpers.get_bot_username()
-                                link_url = f"https://t.me/{bot_username}?start=roster_{reg.get('sync_req_id')}_{chat_id}"
-                                prompt_text = helpers.get_random_roster_prompt(link_url)
-                                thread_id = body["message"].get("message_thread_id") or reg.get("thread_id")
-                                telegram_api.send_message(
-                                    chat_id,
-                                    thread_id,
-                                    prompt_text,
-                                    formatted=True,
-                                    reply_to_message_id=body["message"]["message_id"]
-                                )
+                                if datastore.get_user_registration_reminders_count(user_id) < 3:
+                                    bot_username = helpers.get_bot_username()
+                                    link_url = f"https://t.me/{bot_username}?start=roster_{reg.get('sync_req_id')}_{chat_id}"
+                                    prompt_text = helpers.get_random_roster_prompt(link_url)
+                                    thread_id = body["message"].get("message_thread_id") or reg.get("thread_id")
+                                    telegram_api.send_message(
+                                        chat_id,
+                                        thread_id,
+                                        prompt_text,
+                                        formatted=True,
+                                        reply_to_message_id=body["message"]["message_id"]
+                                    )
+                                    datastore.increment_user_registration_reminders_count(user_id, username=username)
                     return ""
 
             cmd = inp[0].split("@")[0].lower()
