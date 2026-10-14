@@ -16,10 +16,23 @@ import requests
 import os
 import sys
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
+
 API_URL = "https://api.rating.chgk.info"
 HEADERS = {"Accept": "application/json"}
 LD_HEADERS = {"Accept": "application/ld+json"}
 TIMEOUT = 10
+
+session = requests.Session()
+retries = Retry(total=5, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])
+adapter = HTTPAdapter(max_retries=retries)
+session.mount("https://", adapter)
+session.mount("http://", adapter)
 
 
 class TestRatingApiHealth(unittest.TestCase):
@@ -43,7 +56,7 @@ class TestRatingApiHealth(unittest.TestCase):
     def test_01_api_entrypoint_and_docs(self):
         """Verifies entrypoint and documentation accessibility."""
         # Entrypoint with application/ld+json
-        r = requests.get(f"{API_URL}/", headers=LD_HEADERS, timeout=TIMEOUT)
+        r = session.get(f"{API_URL}/", headers=LD_HEADERS, timeout=TIMEOUT)
         self.assertEqual(r.status_code, 200, f"Entrypoint returned {r.status_code}")
         data = r.json()
         self.assertIn("tournament", data)
@@ -51,13 +64,13 @@ class TestRatingApiHealth(unittest.TestCase):
         self.assertIn("player", data)
 
         # Docs endpoint
-        r_docs = requests.get(f"{API_URL}/docs.jsonld", headers=LD_HEADERS, timeout=TIMEOUT)
+        r_docs = session.get(f"{API_URL}/docs.jsonld", headers=LD_HEADERS, timeout=TIMEOUT)
         self.assertEqual(r_docs.status_code, 200, f"docs.jsonld returned {r_docs.status_code}")
 
     def test_02_tournament_by_id(self):
         """Verifies fetching a single tournament by ID and expected fields."""
         tourn_id = 5000
-        r = requests.get(f"{API_URL}/tournaments/{tourn_id}", headers=HEADERS, timeout=TIMEOUT)
+        r = session.get(f"{API_URL}/tournaments/{tourn_id}", headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r.status_code, 200, f"Tournament {tourn_id} returned {r.status_code}")
         t = r.json()
         self.assertEqual(t.get("id"), tourn_id)
@@ -85,7 +98,7 @@ class TestRatingApiHealth(unittest.TestCase):
             "page": 1,
             "itemsPerPage": 20,
         }
-        r = requests.get(f"{API_URL}/tournaments", params=params, headers=HEADERS, timeout=TIMEOUT)
+        r = session.get(f"{API_URL}/tournaments", params=params, headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r.status_code, 200, f"/tournaments returned {r.status_code}")
         items = r.json()
         self.assertIsInstance(items, list)
@@ -106,7 +119,7 @@ class TestRatingApiHealth(unittest.TestCase):
             "page": 1,
             "itemsPerPage": 10,
         }
-        r = requests.get(f"{API_URL}/venues/{venue_id}/requests", params=params, headers=HEADERS, timeout=TIMEOUT)
+        r = session.get(f"{API_URL}/venues/{venue_id}/requests", params=params, headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r.status_code, 200, f"/venues/{venue_id}/requests returned {r.status_code}")
         items = r.json()
         self.assertIsInstance(items, list)
@@ -125,14 +138,14 @@ class TestRatingApiHealth(unittest.TestCase):
             "issuedAt[before]": "2024-06-01",
             "itemsPerPage": 5,
         }
-        r_issued = requests.get(f"{API_URL}/venues/{venue_id}/requests", params=issued_params, headers=HEADERS, timeout=TIMEOUT)
+        r_issued = session.get(f"{API_URL}/venues/{venue_id}/requests", params=issued_params, headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r_issued.status_code, 200)
 
     def test_05_tournament_synch_request_detail(self):
         """Verifies fetching details of a specific sync request."""
         # Request 588 is a known valid request
         s_id = 588
-        r = requests.get(f"{API_URL}/tournament_synch_requests/{s_id}", headers=HEADERS, timeout=TIMEOUT)
+        r = session.get(f"{API_URL}/tournament_synch_requests/{s_id}", headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r.status_code, 200, f"Request {s_id} returned {r.status_code}")
         data = r.json()
         self.assertEqual(data.get("id"), s_id)
@@ -146,7 +159,7 @@ class TestRatingApiHealth(unittest.TestCase):
         """Verifies team by ID, team search, team seasons, and team tournaments."""
         team_id = 1
         # Team by ID
-        r = requests.get(f"{API_URL}/teams/{team_id}", headers=HEADERS, timeout=TIMEOUT)
+        r = session.get(f"{API_URL}/teams/{team_id}", headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r.status_code, 200)
         team = r.json()
         self.assertEqual(team.get("id"), team_id)
@@ -154,14 +167,14 @@ class TestRatingApiHealth(unittest.TestCase):
         self.assertIn("town", team)
 
         # Search teams by name
-        r_search = requests.get(f"{API_URL}/teams", params={"name": "Афина", "itemsPerPage": 5}, headers=HEADERS, timeout=TIMEOUT)
+        r_search = session.get(f"{API_URL}/teams", params={"name": "Афина", "itemsPerPage": 5}, headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r_search.status_code, 200)
         teams = r_search.json()
         self.assertIsInstance(teams, list)
         self.assertGreater(len(teams), 0)
 
         # Team seasons
-        r_seasons = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 10}, headers=HEADERS, timeout=TIMEOUT)
+        r_seasons = session.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 10}, headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r_seasons.status_code, 200)
         seasons = r_seasons.json()
         self.assertIsInstance(seasons, list)
@@ -169,7 +182,7 @@ class TestRatingApiHealth(unittest.TestCase):
         self.assertIn("idplayer", seasons[0])
 
         # Team tournaments
-        r_tourns = requests.get(f"{API_URL}/teams/{team_id}/tournaments", headers=HEADERS, timeout=TIMEOUT)
+        r_tourns = session.get(f"{API_URL}/teams/{team_id}/tournaments", headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r_tourns.status_code, 200)
         tourns = r_tourns.json()
         self.assertIsInstance(tourns, list)
@@ -180,7 +193,7 @@ class TestRatingApiHealth(unittest.TestCase):
         """Verifies player by ID, player seasons, and search by surname/name."""
         player_id = 1000
         # Player by ID
-        r = requests.get(f"{API_URL}/players/{player_id}", headers=HEADERS, timeout=TIMEOUT)
+        r = session.get(f"{API_URL}/players/{player_id}", headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r.status_code, 200)
         player = r.json()
         self.assertEqual(player.get("id"), player_id)
@@ -189,7 +202,7 @@ class TestRatingApiHealth(unittest.TestCase):
         self.assertIn("patronymic", player)
 
         # Player seasons
-        r_seasons = requests.get(f"{API_URL}/players/{player_id}/seasons", params={"itemsPerPage": 10}, headers=HEADERS, timeout=TIMEOUT)
+        r_seasons = session.get(f"{API_URL}/players/{player_id}/seasons", params={"itemsPerPage": 10}, headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r_seasons.status_code, 200)
         seasons = r_seasons.json()
         self.assertIsInstance(seasons, list)
@@ -197,14 +210,14 @@ class TestRatingApiHealth(unittest.TestCase):
         self.assertIn("idteam", seasons[0])
 
         # Search by surname
-        r_surname = requests.get(f"{API_URL}/players", params={"surname": "Иванов", "itemsPerPage": 5}, headers=HEADERS, timeout=TIMEOUT)
+        r_surname = session.get(f"{API_URL}/players", params={"surname": "Иванов", "itemsPerPage": 5}, headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r_surname.status_code, 200)
         players = r_surname.json()
         self.assertIsInstance(players, list)
         self.assertGreater(len(players), 0)
 
         # Search by name and surname
-        r_both = requests.get(f"{API_URL}/players", params={"surname": "Иванов", "name": "Александр", "itemsPerPage": 5}, headers=HEADERS, timeout=TIMEOUT)
+        r_both = session.get(f"{API_URL}/players", params={"surname": "Иванов", "name": "Александр", "itemsPerPage": 5}, headers=HEADERS, timeout=TIMEOUT)
         self.assertEqual(r_both.status_code, 200)
         both_players = r_both.json()
         self.assertIsInstance(both_players, list)
@@ -217,7 +230,7 @@ class TestRatingApiHealth(unittest.TestCase):
         venue_id = 3036
 
         # Filter by venue
-        r = requests.get(
+        r = session.get(
             f"{API_URL}/tournaments/{tid}/results",
             params={"venue": venue_id, "includeTeamMembers": 1},
             headers=HEADERS,
@@ -244,7 +257,7 @@ class TestRatingApiHealth(unittest.TestCase):
         # Quirk 1: ?team filter on /results is ignored by API
         tid = 8998
         sample_team_id = 87214
-        r = requests.get(f"{API_URL}/tournaments/{tid}/results", params={"team": sample_team_id}, headers=HEADERS, timeout=TIMEOUT)
+        r = session.get(f"{API_URL}/tournaments/{tid}/results", params={"team": sample_team_id}, headers=HEADERS, timeout=TIMEOUT)
         if r.ok:
             data = r.json()
             teams_in_response = {res.get("team", {}).get("id") for res in data if isinstance(res.get("team"), dict)}
@@ -254,13 +267,54 @@ class TestRatingApiHealth(unittest.TestCase):
                 print(f"\n[NOTICE] /tournaments/{tid}/results now respects ?team! Upstream may have implemented it.")
 
         # Quirk 2: /players ignores ?patronymic filter
-        r_pat = requests.get(f"{API_URL}/players", params={"surname": "Иванов", "name": "Иван", "patronymic": "Иванович", "itemsPerPage": 5}, headers=HEADERS, timeout=TIMEOUT)
+        r_pat = session.get(f"{API_URL}/players", params={"surname": "Иванов", "name": "Иван", "patronymic": "Иванович", "itemsPerPage": 5}, headers=HEADERS, timeout=TIMEOUT)
         if r_pat.ok:
             data = r_pat.json()
             # If server ignored patronymic, results may contain players without 'Иванович'
             non_ivanovich = [p for p in data if (p.get("patronymic") or "") != "Иванович"]
             if non_ivanovich:
                 print(f"[QUIRK VERIFIED] /players ignores ?patronymic filter (returned {len(non_ivanovich)} players with differing patronymics).")
+
+    def test_10_tournament_schema_rating_and_fields(self):
+        """Verifies new schema: tournaments have 'rating' (or 'ggRating'), and maiiRating is no longer present."""
+        tourn_id = 14200
+        r = session.get(f"{API_URL}/tournaments/{tourn_id}", headers=HEADERS, timeout=TIMEOUT)
+        self.assertEqual(r.status_code, 200)
+        t = r.json()
+        self.assertNotIn("maiiRating", t, "maiiRating was removed from API")
+        self.assertNotIn("maiiEpoch", t, "maiiEpoch was removed from API")
+        self.assertIn("rating", t, "rating should be present in new tournament schema")
+        self.assertIsInstance(t["rating"], bool)
+
+    def test_11_tournament_results_team_member_captain(self):
+        """Verifies teamMembers in results include 'captain' boolean field."""
+        tid = 10000
+        r = session.get(f"{API_URL}/tournaments/{tid}/results", params={"itemsPerPage": 5, "includeTeamMembers": 1}, headers=HEADERS, timeout=TIMEOUT)
+        self.assertEqual(r.status_code, 200)
+        results = r.json()
+        self.assertIsInstance(results, list)
+        self.assertGreater(len(results), 0)
+        members = results[0].get("teamMembers", [])
+        self.assertGreater(len(members), 0)
+        self.assertIn("captain", members[0], "captain field should be in teamMember in new schema")
+
+    def test_12_get_person_form_with_various_api_shapes(self):
+        """Verifies helpers.get_person_form handles None patronymic and string formats safely."""
+        import helpers
+        # Dict with None patronymic (new API behavior)
+        form, fem = helpers.get_person_form({"name": "Алексей", "surname": "Абабилов", "patronymic": None})
+        self.assertEqual(form, "Алексей Абабилов")
+        self.assertFalse(fem)
+
+        # Dict with feminine patronymic
+        form, fem = helpers.get_person_form({"name": "Дарья", "surname": "Костина", "patronymic": "Юрьевна"})
+        self.assertEqual(form, "Дарья Костина")
+        self.assertTrue(fem)
+
+        # String format fallback
+        form, fem = helpers.get_person_form("Иван Иванов")
+        self.assertEqual(form, "Иван Иванов")
+        self.assertFalse(fem)
 
 
 def print_banner(text):

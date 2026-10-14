@@ -138,32 +138,77 @@ def resolve_timezone(tz_name):
 
 
 def get_person_form(person):
-    person_form = person["name"] + " " + person["surname"]
+    if not person:
+        return "", False
+    if isinstance(person, str):
+        parts = person.strip().split()
+        first_name = parts[0] if parts else ""
+        last_name = parts[1] if len(parts) > 1 else ""
+        patronymic = parts[2] if len(parts) > 2 else ""
+    elif isinstance(person, dict):
+        first_name = (person.get("name") or "").strip()
+        last_name = (person.get("surname") or "").strip()
+        patronymic = (person.get("patronymic") or "").strip()
+    else:
+        return str(person), False
+
+    person_form = f"{first_name} {last_name}".strip() or first_name or last_name
     is_feminine = (
-        person.get("patronymic", "").endswith("на")
-        or person.get("patronymic", "").lower().endswith(" гызы")
-        or person.get("patronymic", "").lower().endswith(" кызы")
-        or person.get("patronymic", "").lower().endswith(" кизи")
+        patronymic.endswith("на")
+        or patronymic.lower().endswith(" гызы")
+        or patronymic.lower().endswith(" кызы")
+        or patronymic.lower().endswith(" кизи")
         or (
-            not person.get("patronymic", "")
+            not patronymic
             and (
-                person["name"].endswith("а")
-                and person["name"].lower()
+                first_name.endswith("а")
+                and first_name.lower()
                 not in ("никита", "кузьма", "савва", "фома", "лука", "данила")
-                or person["name"].endswith("я")
-                and person["name"].lower() not in ("илья", "емеля", "добрыня")
-                or len(person["surname"]) > 5
+                or first_name.endswith("я")
+                and first_name.lower() not in ("илья", "емеля", "добрыня")
+                or len(last_name) > 5
                 and (
-                    person["surname"].endswith("ова")
-                    or person["surname"].endswith("ева")
+                    last_name.endswith("ова")
+                    or last_name.endswith("ева")
                 )
             )
         )
     )
     return person_form, is_feminine
 
+def _has_explicit_time(text):
+    text = text.lower().strip()
+    cleaned = re.sub(r'\b\d{4}-\d{1,2}-\d{1,2}\b', '', text)
+    cleaned = re.sub(r'\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b', '', cleaned)
+    cleaned = re.sub(r'\b\d{1,2}\.(0[1-9]|1[0-2])\b', '', cleaned)
+
+    if re.search(r'\b([01]?[0-9]|2[0-3]):[0-5][0-9]\b', cleaned):
+        return True
+    if re.search(r'\b(в|к|до)\s*([01]?[0-9]|2[0-3])([:.-][0-5][0-9])?(\s*(ч|час|часа|часов|вечера|утра|дня))?\b', cleaned):
+        return True
+    if re.search(r'\b([0-9]{1,2})\s*(вечера|утра|дня|ночи|ч|час|часа|часов)\b', cleaned):
+        return True
+    dash_time = re.search(r'\b([01]?[0-9]|2[0-3])[-]([0-5][0-9])\b', cleaned)
+    if dash_time:
+        return True
+    dot_time = re.search(r'\b([01]?[0-9]|2[0-3])\.([0-5][0-9])\b', cleaned)
+    if dot_time:
+        return True
+    return False
+
+
 def _parse_date_legacy(input_date, timezone):
     input_str = input_date.strip().lower()
+
+    if len(input_str) >= 10:
+        for fmt in ("%Y-%m-%d", "%Y%m%d", "%d.%m.%Y"):
+            try:
+                dt = datetime.datetime.strptime(input_str[:10], fmt)
+                if debug.get_debug():
+                    print("parse_date:", input_date, "->", dt.date())
+                return dt.date(), False
+            except ValueError:
+                pass
 
     for fmt in ("%Y%m%d", "%Y-%m-%d", "%d.%m.%Y", "%d.%m"):
         try:
@@ -216,10 +261,14 @@ def _parse_date_legacy(input_date, timezone):
     ):
         result_date -= week_delta
 
+    if not _has_explicit_time(input_str):
+        return result_date.date(), False
+
     return result_date, True
 
 
 ACTIVE_GEMINI_MODEL = None
+GEMINI_COOLDOWN_UNTIL = 0
 
 
 def get_active_gemini_model():
@@ -284,6 +333,10 @@ def parse_date_gemini(input_date, timezone):
     Parses natural language date/time using Google Gemini Flash API.
     Returns: (parsed_date_or_datetime, with_time) or (None, False) on failure/unset API key.
     """
+    global GEMINI_COOLDOWN_UNTIL
+    if time.time() < GEMINI_COOLDOWN_UNTIL:
+        return None, False
+
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None, False
@@ -330,10 +383,21 @@ def parse_date_gemini(input_date, timezone):
             },
         }
 
-        resp = requests.post(url, json=payload, timeout=3.0)
+        resp = requests.post(url, json=payload, timeout=2.0)
         if not resp.ok:
             print(f"[GEMINI_PARSER_ERROR] HTTP {resp.status_code} with model '{model_name}': {resp.text}")
-            
+
+            if resp.status_code == 402:
+                # Prepayment credits depleted - back off for 1 hour to prevent blocking/spamming
+                GEMINI_COOLDOWN_UNTIL = time.time() + 3600
+                print("[GEMINI_PARSER_DISABLED] Disabling Gemini requests for 1 hour due to depleted credits (HTTP 402)")
+                return None, False
+            elif resp.status_code == 429:
+                # Rate limit / quota exhausted - back off for 5 minutes
+                GEMINI_COOLDOWN_UNTIL = time.time() + 300
+                print("[GEMINI_PARSER_DISABLED] Disabling Gemini requests for 5 minutes due to rate limit/quota (HTTP 429)")
+                return None, False
+
             # Auto-healing: if model is deprecated or not found, try to auto-switch
             if resp.status_code in (404, 400):
                 match = re.search(r"use models/([a-zA-Z0-9\.\-]+)", resp.text, re.IGNORECASE)
@@ -347,9 +411,13 @@ def parse_date_gemini(input_date, timezone):
                 current_active = get_active_gemini_model()
                 if current_active != model_name:
                     retry_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_active}:generateContent?key={api_key}"
-                    resp = requests.post(retry_url, json=payload, timeout=3.0)
+                    resp = requests.post(retry_url, json=payload, timeout=2.0)
                     if not resp.ok:
                         print(f"[GEMINI_RETRY_ERROR] HTTP {resp.status_code} with model '{current_active}': {resp.text}")
+                        if resp.status_code == 402:
+                            GEMINI_COOLDOWN_UNTIL = time.time() + 3600
+                        elif resp.status_code == 429:
+                            GEMINI_COOLDOWN_UNTIL = time.time() + 300
                         return None, False
                 else:
                     return None, False
@@ -417,31 +485,7 @@ def _is_date_mismatch(legacy_res, legacy_with_time, gemini_res, gemini_with_time
 
 
 def parse_date(input_date, timezone):
-    legacy_date, legacy_with_time = _parse_date_legacy(input_date, timezone)
-
-    # Shadow / Debug comparison with Gemini Flash
-    try:
-        gemini_date, gemini_with_time = parse_date_gemini(input_date, timezone)
-        if gemini_date is not None:
-            legacy_str = _format_date_res(legacy_date, legacy_with_time)
-            gemini_str = _format_date_res(gemini_date, gemini_with_time)
-            print(
-                f"[DATE_PARSER_DEBUG] Input: '{input_date}' | TZ: {timezone}\n"
-                f"  -> Legacy: {legacy_str}\n"
-                f"  -> Gemini: {gemini_str}"
-            )
-            if _is_date_mismatch(
-                legacy_date, legacy_with_time, gemini_date, gemini_with_time
-            ):
-                print(
-                    f"[DATE_PARSER_MISMATCH] Date parsing divergence for '{input_date}' (TZ: {timezone}):\n"
-                    f"  Legacy -> {legacy_str}\n"
-                    f"  Gemini -> {gemini_str}"
-                )
-    except Exception as e:
-        print(f"[DATE_PARSER_COMPARE_ERROR] Failed during comparison: {e}")
-
-    return legacy_date, legacy_with_time
+    return _parse_date_legacy(input_date, timezone)
 
 import html
 

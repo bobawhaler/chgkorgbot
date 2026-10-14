@@ -155,16 +155,21 @@ def get_new_sync_requests(venue_id):
         else:
             print("Error: no narrators in sync request")
 
+        try:
+            date_start = datetime.datetime.fromisoformat(
+                sync_req["dateStart"].replace("Z", "+00:00")
+            )
+        except Exception:
+            date_start = datetime.datetime.now(pytz.utc)
+
         result.append(
             {
                 "id": str(sync_req["id"]),
-                "tourn_id": sync_req["tournamentId"],
-                "status": sync_req["status"],
-                "representative": sync_req["representative"],
+                "tourn_id": sync_req.get("tournamentId"),
+                "status": sync_req.get("status"),
+                "representative": sync_req.get("representative"),
                 "narrator": narrator,
-                "dateStart": datetime.datetime.strptime(
-                    sync_req["dateStart"], "%Y-%m-%dT%H:%M:%S%z"
-                ),
+                "dateStart": date_start,
             }
         )
 
@@ -229,6 +234,12 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
     for tourn in tournaments:
         if _debug:
             print("tourn:", tourn.get("id"), tourn.get("name"))
+        is_rated = bool(
+            tourn.get("rating")
+            or tourn.get("ggRating")
+            or tourn.get("maiiRating")
+            or ("chgkgg" in (tourn.get("ratingSystems") or []))
+        )
         if (
             "difficultyForecast" in tourn
             and tourn["difficultyForecast"]
@@ -236,8 +247,7 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
                 tourn["difficultyForecast"] < helpers.get_chat_min_difficulty(chat_id)
                 or tourn["difficultyForecast"] > helpers.get_chat_max_difficulty(chat_id)
             )
-            or only_rated
-            and ("maiiRating" not in tourn or not tourn["maiiRating"])
+            or (only_rated and not is_rated)
         ):
             continue
         if (
@@ -277,20 +287,22 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
             ):
                 continue
         tourn_questions = 0
-        if "questionQty" in tourn:
-            for n_tour in tourn["questionQty"]:
-                tourn_questions += tourn["questionQty"][n_tour]
+        q_qty = tourn.get("questionQty")
+        if isinstance(q_qty, dict):
+            tourn_questions = sum(v for v in q_qty.values() if isinstance(v, (int, float)))
+        elif isinstance(q_qty, (int, float)):
+            tourn_questions = int(q_qty)
         difficulty = (
-            tourn["difficultyForecast"]
-            if "difficultyForecast" in tourn and tourn["difficultyForecast"]
-            else 0
+            tourn.get("difficultyForecast")
+            or tourn.get("trueDL")
+            or 0
         )
         result.append(
             {
                 "id": tourn["id"],
                 "name": tourn["name"],
                 "num_questions": tourn_questions,
-                "rating": tourn["maiiRating"],
+                "rating": is_rated,
                 "difficulty": difficulty,
                 "editors": tourn_editors,
             }
@@ -421,10 +433,10 @@ def get_player_by_id(pid):
             if isinstance(p, dict) and "id" in p:
                 pdata = {
                     "id": p["id"],
-                    "name": p.get("name", ""),
-                    "surname": p.get("surname", ""),
-                    "patronymic": p.get("patronymic", ""),
-                    "town": get_player_town(p["id"]),
+                    "name": p.get("name") or "",
+                    "surname": p.get("surname") or "",
+                    "patronymic": p.get("patronymic") or "",
+                    "town": get_player_town(p["id"]) or "",
                 }
                 try:
                     import datastore
@@ -556,7 +568,7 @@ def get_team_base_players(team_id):
                 base_pids = {item["idplayer"] for item in base_items if item.get("idplayer")}
                 captain_id = None
                 for item in base_items:
-                    if item.get("playerNumber") == 1:
+                    if item.get("captain") or item.get("playerNumber") == 1:
                         captain_id = item.get("idplayer")
                         break
                 datastore.cache_team_base_roster(team_id, base_pids, captain_id)
@@ -590,9 +602,9 @@ def search_players(query):
                     if isinstance(p, dict) and "id" in p and p["id"] not in results:
                         pdata = {
                             "id": p["id"],
-                            "name": p.get("name", ""),
-                            "surname": p.get("surname", ""),
-                            "patronymic": p.get("patronymic", ""),
+                            "name": p.get("name") or "",
+                            "surname": p.get("surname") or "",
+                            "patronymic": p.get("patronymic") or "",
                             "town": "",
                             "rating": 0,
                             "tourn_count": 0,

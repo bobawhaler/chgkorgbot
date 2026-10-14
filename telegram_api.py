@@ -6,9 +6,9 @@ import helpers
 import debug
 
 
-BASE_URL = "https://api.telegram.org/bot" + helpers.TELEGRAM_API_TOKEN + "/"
+BASE_URL = f"https://api.telegram.org/bot{helpers.TELEGRAM_API_TOKEN or ''}/"
 HOOK_URL = (
-    f"https://{helpers.PROJECT_ID}.appspot.com/command{helpers.OBFUSCATION_TOKEN}"
+    f"https://{helpers.PROJECT_ID or ''}.appspot.com/command{helpers.OBFUSCATION_TOKEN or ''}"
 )
 MAX_MESSAGE_SIZE = 4000
 

@@ -637,12 +637,26 @@ def command_handler(body):
                         gem_dt, with_t = helpers.parse_date_gemini(date_input, tz)
                         if gem_dt:
                             llm_date_str = helpers._format_date_res(gem_dt, with_t)
+                            leg_dt, leg_with_t = helpers.parse_date(date_input, tz)
+                            if helpers._is_date_mismatch(leg_dt, leg_with_t, gem_dt, with_t):
+                                print(
+                                    f"[DATE_PARSER_MISMATCH] Command '{cmd_name} {date_input}' (TZ: {tz}):\n"
+                                    f"  Legacy -> {helpers._format_date_res(leg_dt, leg_with_t)}\n"
+                                    f"  Gemini -> {llm_date_str}"
+                                )
                     elif cmd_name == "/poll" and len(raw_parts) > 2:
                         date_input = " ".join(raw_parts[2:])
                         tz = helpers.get_chat_timezone(chat_id)
                         gem_dt, with_t = helpers.parse_date_gemini(date_input, tz)
                         if gem_dt:
                             llm_date_str = helpers._format_date_res(gem_dt, with_t)
+                            leg_dt, leg_with_t = helpers.parse_date(date_input, tz)
+                            if helpers._is_date_mismatch(leg_dt, leg_with_t, gem_dt, with_t):
+                                print(
+                                    f"[DATE_PARSER_MISMATCH] Command '{cmd_name} {date_input}' (TZ: {tz}):\n"
+                                    f"  Legacy -> {helpers._format_date_res(leg_dt, leg_with_t)}\n"
+                                    f"  Gemini -> {llm_date_str}"
+                                )
                 except Exception as e:
                     print(f"Error extracting LLM date for command logging: {e}")
 
@@ -836,11 +850,18 @@ def command_handler(body):
                     tourns_list
                 )
                 datastore.store_data(chat_id, tourns_to_save)
-                telegram_api.send_multi_message(
-                    chat_id,
-                    thread_id,
-                    [header] + [f"{i+1}. {e}" for i, e in enumerate(tourns_to_show)],
-                )
+                if tourns_to_show:
+                    telegram_api.send_multi_message(
+                        chat_id,
+                        thread_id,
+                        [header] + [f"{i+1}. {e}" for i, e in enumerate(tourns_to_show)],
+                    )
+                else:
+                    telegram_api.send_formatted_message(
+                        chat_id,
+                        thread_id,
+                        f"{header}\n<i>Турниров не найдено.</i>",
+                    )
             elif cmd == "/print" and len(inp) > 1:
                 tourns = datastore.fetch_data(chat_id)
                 telegram_api.send_message(chat_id, thread_id, tourns[int(inp[1]) - 1])
