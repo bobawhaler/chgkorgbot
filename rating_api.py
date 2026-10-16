@@ -237,7 +237,6 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
         is_rated = bool(
             tourn.get("rating")
             or tourn.get("ggRating")
-            or tourn.get("maiiRating")
             or ("chgkgg" in (tourn.get("ratingSystems") or []))
         )
         if (
@@ -613,28 +612,51 @@ def search_players(query):
         except Exception as e:
             print(f"Error in search request {params}: {e}")
 
+    def _cap(word):
+        raw_parts = str(word).split("-")
+        out = []
+        for idx, part in enumerate(raw_parts):
+            p_low = part.lower()
+            if idx > 0 and p_low in {"оглы", "гызы", "кызы", "угли", "уулу", "заде"}:
+                out.append(p_low)
+            else:
+                out.append(part.capitalize())
+        return "-".join(out)
+
     try:
         if len(words) == 1:
-            do_search({"surname": words[0].capitalize()})
-            if words[0] != words[0].capitalize():
-                do_search({"surname": words[0]})
+            w0 = _cap(words[0])
+            do_search({"surname": w0})
             if len(results) < 5:
-                do_search({"name": words[0].capitalize()})
+                do_search({"name": w0})
         elif len(words) == 2:
-            w0, w1 = words[0], words[1]
-            do_search({"surname": w1.capitalize(), "name": w0.capitalize()})
-            do_search({"surname": w0.capitalize(), "name": w1.capitalize()})
+            w0, w1 = _cap(words[0]), _cap(words[1])
+            do_search({"surname": w1, "name": w0})
+            do_search({"surname": w0, "name": w1})
         elif len(words) >= 3:
-            w0, w1, w2 = words[0], words[1], words[2]
-            do_search({"surname": w0.capitalize(), "name": w1.capitalize(), "patronymic": w2.capitalize()})
-            do_search({"surname": w2.capitalize(), "name": w0.capitalize(), "patronymic": w1.capitalize()})
-            if not results:
-                do_search({"surname": w1.capitalize(), "name": w0.capitalize()})
-                do_search({"surname": w0.capitalize(), "name": w1.capitalize()})
+            w0, w1, w_last = _cap(words[0]), _cap(words[1]), _cap(words[-1])
+            # Covers "Фамилия Имя Отчество [оглы/гызы]" (e.g. "Бабаева Гюнель Рафик гызы")
+            do_search({"surname": w0, "name": w1})
+            # Covers "Имя Отчество [оглы/гызы] Фамилия" (e.g. "Гюнель Рафик гызы Бабаева")
+            do_search({"surname": w_last, "name": w0})
+            # Covers "Имя Фамилия Отчество [оглы/гызы]" (e.g. "Гюнель Бабаева Рафик гызы")
+            if w1 != w_last:
+                do_search({"surname": w1, "name": w0})
     except Exception as e:
         print(f"Error searching players query={query}: {e}")
 
     result = list(results.values())
+    if len(words) >= 3 and result:
+        q_words_norm = [w.lower().replace("ё", "е") for w in words]
+        exact_patronymic_matches = [
+            p for p in result
+            if all(
+                qw in f"{p.get('surname', '')} {p.get('name', '')} {p.get('patronymic', '')}".lower().replace("ё", "е")
+                for qw in q_words_norm
+            )
+        ]
+        if exact_patronymic_matches:
+            result = exact_patronymic_matches
 
     # Fast town enrichment for top results
     top_pids = [p["id"] for p in result[:10] if not p.get("town")]
@@ -656,7 +678,7 @@ def search_players(query):
             pass
 
     debug.log("rating_api.search_players", t0, f"query={query} -> {len(result)}")
-    return list(results.values())
+    return result
 
 def sync_venue_history(venue_id, months=12):
     """

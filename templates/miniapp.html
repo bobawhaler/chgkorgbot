@@ -1014,11 +1014,11 @@
       </div>
       <div class="form-group">
         <label class="form-label">Фамилия</label>
-        <input type="text" class="form-input" id="inputUnratedSurname" placeholder="Иванов">
+        <input type="text" class="form-input" id="inputUnratedSurname" placeholder="Иванов" autocapitalize="words">
       </div>
       <div class="form-group">
         <label class="form-label">Имя</label>
-        <input type="text" class="form-input" id="inputUnratedName" placeholder="Иван">
+        <input type="text" class="form-input" id="inputUnratedName" placeholder="Иван" autocapitalize="words">
       </div>
       <button class="btn btn-block" onclick="addUnratedPlayer()">Добавить в состав</button>
     </div>
@@ -2660,6 +2660,36 @@
       renderCandidatesList();
     }
 
+    const LOWERCASE_NAME_WORDS = new Set([
+      "оглы", "гызы", "кызы", "угли", "уулу",
+      "фон", "ван", "де", "ди", "да", "до", "душ", "дер", "ден",
+      "аль", "эль", "ибн", "бен", "ле", "ла", "дю"
+    ]);
+    const LOWERCASE_HYPHEN_SUFFIXES = new Set([
+      "оглы", "гызы", "кызы", "угли", "уулу", "заде"
+    ]);
+
+    function capitalizeNamePart(str) {
+      if (!str) return "";
+      const words = String(str).trim().split(/\s+/).filter(Boolean);
+      return words
+        .map(w => {
+          const wLow = w.toLowerCase();
+          if (words.length > 1 && LOWERCASE_NAME_WORDS.has(wLow)) {
+            return wLow;
+          }
+          return w.split("-").map((p, idx) => {
+            if (!p) return "";
+            const pLow = p.toLowerCase();
+            if (idx > 0 && (LOWERCASE_HYPHEN_SUFFIXES.has(pLow) || LOWERCASE_NAME_WORDS.has(pLow))) {
+              return pLow;
+            }
+            return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();
+          }).join("-");
+        })
+        .join(" ");
+    }
+
     function openUnratedModal() {
       haptic("selection");
       document.getElementById("inputUnratedSurname").value = "";
@@ -2668,8 +2698,8 @@
     }
 
     function addUnratedPlayer() {
-      const surname = document.getElementById("inputUnratedSurname").value.trim();
-      const name = document.getElementById("inputUnratedName").value.trim();
+      const surname = capitalizeNamePart(document.getElementById("inputUnratedSurname").value);
+      const name = capitalizeNamePart(document.getElementById("inputUnratedName").value);
       if (!name && !surname) {
         alert("Введите имя или фамилию игрока");
         return;

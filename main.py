@@ -739,7 +739,17 @@ def api_miniapp_save_roster():
     display_name = data.get("display_name", team_name)
     town = data.get("town", "")
     rating_team_id = data.get("rating_team_id")
-    roster = data.get("roster", [])
+    roster = [
+        {
+            **p,
+            "name": helpers.normalize_person_name_part(p.get("name", "")),
+            "surname": helpers.normalize_person_name_part(p.get("surname", "")),
+            "patronymic": helpers.normalize_person_name_part(p.get("patronymic", "")),
+        }
+        if isinstance(p, dict)
+        else p
+        for p in data.get("roster", [])
+    ]
     team_index = data.get("team_index")
     target_user_id = data.get("target_user_id")
     registered_name = data.get("registered_name")

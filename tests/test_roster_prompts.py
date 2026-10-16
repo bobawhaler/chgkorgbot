@@ -121,7 +121,125 @@ class TestRosterPrompts(unittest.TestCase):
         mock_send_msg.assert_not_called()
         mock_inc_rem.assert_not_called()
 
+    @patch("rating_api.search_players")
+    @patch("datastore.search_cached_players")
+    @patch("datastore.get_venues_team_rosters")
+    @patch("datastore.get_chat_config")
+    @patch("rating_api.get_team_players")
+    @patch("datastore.get_user_history")
+    @patch("datastore.get_user_mapping")
+    def test_search_players_tiered_case_insensitive(
+        self,
+        mock_mapping,
+        mock_history,
+        mock_team_players,
+        mock_chat_cfg,
+        mock_venue_rosters,
+        mock_cached,
+        mock_api_search,
+    ):
+        mock_mapping.return_value = {
+            "rating_player_id": 101,
+            "name": "Александр",
+            "surname": "Замятин",
+            "patronymic": "Александрович",
+            "town": "Берлин",
+        }
+        mock_history.return_value = {
+            "players": [
+                {
+                    "player_id": 202,
+                    "name": "Артём",
+                    "surname": "Фёдоров",
+                    "patronymic": "Игоревич",
+                    "town": "Мюнхен",
+                }
+            ]
+        }
+        mock_team_players.return_value = [
+            {
+                "id": 303,
+                "name": "Галина",
+                "surname": "Тер-Акопян",
+                "patronymic": "",
+                "town": "Ереван",
+            }
+        ]
+        mock_chat_cfg.return_value = {"venues": [3053]}
+        mock_venue_rosters.return_value = []
+        mock_cached.return_value = []
+        mock_api_search.return_value = []
+
+        # Lowercase surname
+        res1 = helpers.search_players_tiered("замятин", user_id=1, rating_team_id=10, chat_id=-100)
+        self.assertEqual([r["id"] for r in res1], [101])
+
+        # Uppercase reversed order (Name Surname)
+        res2 = helpers.search_players_tiered("АЛЕКСАНДР ЗАМЯТИН", user_id=1, rating_team_id=10, chat_id=-100)
+        self.assertEqual([r["id"] for r in res2], [101])
+
+        # Mixed case + е/ё normalization
+        res3 = helpers.search_players_tiered("артем федоров", user_id=1, rating_team_id=10, chat_id=-100)
+        self.assertEqual([r["id"] for r in res3], [202])
+
+        # Hyphenated surname in lowercase
+        res4 = helpers.search_players_tiered("тер-акопян", user_id=1, rating_team_id=10, chat_id=-100)
+        self.assertEqual([r["id"] for r in res4], [303])
+
+    def test_player_name_capitalization_normalization(self):
+        self.assertEqual(helpers.normalize_person_name_part("иван"), "Иван")
+        self.assertEqual(helpers.normalize_person_name_part("ИВАНОВ"), "Иванов")
+        self.assertEqual(helpers.normalize_person_name_part("тер-акопян"), "Тер-Акопян")
+        self.assertEqual(helpers.normalize_person_name_part("  анна-мария  "), "Анна-Мария")
+        self.assertEqual(helpers.normalize_person_name_part("Рафик гызы"), "Рафик гызы")
+        self.assertEqual(helpers.normalize_person_name_part("рафик гызы"), "Рафик гызы")
+        self.assertEqual(helpers.normalize_person_name_part("Али оглы"), "Али оглы")
+        self.assertEqual(helpers.normalize_person_name_part("АЛИ ОГЛЫ"), "Али оглы")
+        self.assertEqual(helpers.normalize_person_name_part("джамаг-кызы"), "Джамаг-кызы")
+
+        # CSV export should normalize legacy lowercase/uppercase unrated players and preserve гызы/оглы
+        teams = [
+            {
+                "display_name": "Тест",
+                "rating_team_id": 123,
+                "roster": [
+                    {
+                        "id": None,
+                        "surname": "иванов",
+                        "name": "пётр",
+                        "patronymic": "сергеевич",
+                        "flag": "Б",
+                    },
+                    {
+                        "id": None,
+                        "surname": "тер-акопян",
+                        "name": "АННА-МАРИЯ",
+                        "patronymic": "",
+                        "flag": "Л",
+                    },
+                    {
+                        "player_id": 1907,
+                        "surname": "Бабаева",
+                        "name": "Гюнель",
+                        "patronymic": "Рафик гызы",
+                        "flag": "Б",
+                    },
+                    {
+                        "player_id": 73840,
+                        "surname": "Алиев",
+                        "name": "Мирза",
+                        "patronymic": "Али оглы",
+                        "flag": "Б",
+                    },
+                ],
+            }
+        ]
+        csv_text = helpers.generate_roster_csv(teams)
+        self.assertIn("Иванов;Пётр;Сергеевич", csv_text)
+        self.assertIn("Тер-Акопян;Анна-Мария;", csv_text)
+        self.assertIn("1907;Бабаева;Гюнель;Рафик гызы;", csv_text)
+        self.assertIn("73840;Алиев;Мирза;Али оглы;", csv_text)
+
 
 if __name__ == "__main__":
     unittest.main()
-

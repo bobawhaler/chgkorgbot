@@ -467,17 +467,18 @@ def search_cached_players(query, limit=10):
     if not query:
         return []
     try:
-        q_clean = query.strip().lower()
+        q_clean = query.strip().lower().replace("ё", "е")
         datastore_client = get_datastore_client()
         if q_clean.isdigit():
             p = get_cached_player(int(q_clean))
             return [p] if p else []
 
+        q_words = q_clean.split()
         q = datastore_client.query(kind="CachedPlayer")
         matches = []
         for entity in q.fetch(limit=100):
-            p_fio = f"{entity.get('surname', '')} {entity.get('name', '')} {entity.get('patronymic', '')}".lower()
-            if q_clean in p_fio:
+            p_fio = f"{entity.get('surname', '')} {entity.get('name', '')} {entity.get('patronymic', '')}".lower().replace("ё", "е")
+            if all(w in p_fio for w in q_words):
                 matches.append({
                     "id": int(entity.get("player_id", entity.key.name or 0)),
                     "name": entity.get("name", ""),
@@ -762,7 +763,52 @@ def check_roster_conflicts(teams, incoming_roster, current_team_idx=None):
     return None
 
 
+_LOWERCASE_NAME_WORDS = {
+    "оглы", "гызы", "кызы", "угли", "уулу",
+    "фон", "ван", "де", "ди", "да", "до", "душ", "дер", "ден",
+    "аль", "эль", "ибн", "бен", "ле", "ла", "дю",
+}
+_LOWERCASE_HYPHEN_SUFFIXES = {
+    "оглы", "гызы", "кызы", "угли", "уулу", "заде",
+}
+
+
+def _norm_name_part(val):
+    if not val:
+        return ""
+    words = str(val).strip().split()
+    norm_words = []
+    for w in words:
+        w_low = w.lower()
+        if len(words) > 1 and w_low in _LOWERCASE_NAME_WORDS:
+            norm_words.append(w_low)
+            continue
+        raw_parts = w.split("-")
+        parts = []
+        for p_idx, p in enumerate(raw_parts):
+            if not p:
+                parts.append("")
+                continue
+            p_low = p.lower()
+            if p_idx > 0 and (p_low in _LOWERCASE_HYPHEN_SUFFIXES or p_low in _LOWERCASE_NAME_WORDS):
+                parts.append(p_low)
+            else:
+                parts.append(p[:1].upper() + p[1:].lower())
+        norm_words.append("-".join(parts))
+    return " ".join(norm_words)
+
+
 def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team_name, display_name, roster, town=None, team_index=None, target_user_id=None, registered_name=None, is_rep=False):
+    if roster and isinstance(roster, list):
+        for p in roster:
+            if isinstance(p, dict):
+                if "name" in p:
+                    p["name"] = _norm_name_part(p.get("name"))
+                if "surname" in p:
+                    p["surname"] = _norm_name_part(p.get("surname"))
+                if "patronymic" in p:
+                    p["patronymic"] = _norm_name_part(p.get("patronymic"))
+
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
     with datastore_client.transaction():
@@ -1154,6 +1200,9 @@ def add_user_history_team(user_id, team_id, team_name, town="", display_name="")
 
 
 def add_user_history_player(user_id, player_id, name, surname, patronymic=""):
+    name = _norm_name_part(name)
+    surname = _norm_name_part(surname)
+    patronymic = _norm_name_part(patronymic)
     datastore_client = get_datastore_client()
     key = datastore_client.key("UserHistory", str(user_id))
     with datastore_client.transaction():
@@ -1175,9 +1224,9 @@ def add_user_history_player(user_id, player_id, name, surname, patronymic=""):
 
         if existing_p:
             existing_p["player_id"] = player_id or existing_p.get("player_id")
-            existing_p["name"] = name or existing_p.get("name", "")
-            existing_p["surname"] = surname or existing_p.get("surname", "")
-            existing_p["patronymic"] = patronymic or existing_p.get("patronymic", "")
+            existing_p["name"] = name or _norm_name_part(existing_p.get("name", ""))
+            existing_p["surname"] = surname or _norm_name_part(existing_p.get("surname", ""))
+            existing_p["patronymic"] = patronymic or _norm_name_part(existing_p.get("patronymic", ""))
             existing_p["count"] = existing_p.get("count", 1) + 1
             existing_p["last_used"] = now_str
             players.insert(0, existing_p)

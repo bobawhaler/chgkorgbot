@@ -79,6 +79,46 @@ def determine_player_default_status(rating_team_id, pid, current_roster=None):
     return "L"
 
 
+_LOWERCASE_NAME_WORDS = {
+    "оглы", "гызы", "кызы", "угли", "уулу",
+    "фон", "ван", "де", "ди", "да", "до", "душ", "дер", "ден",
+    "аль", "эль", "ибн", "бен", "ле", "ла", "дю",
+}
+_LOWERCASE_HYPHEN_SUFFIXES = {
+    "оглы", "гызы", "кызы", "угли", "уулу", "заде",
+}
+
+
+def normalize_person_name_part(val):
+    """
+    Normalizes capitalization of a person's name, surname, or patronymic
+    (e.g. 'иванов' -> 'Иванов', 'тер-акопян' -> 'Тер-Акопян',
+    'рафик гызы' -> 'Рафик гызы', 'али оглы' -> 'Али оглы', 'джамаг-кызы' -> 'Джамаг-кызы').
+    """
+    if not val:
+        return ""
+    words = str(val).strip().split()
+    norm_words = []
+    for w_idx, w in enumerate(words):
+        w_low = w.lower()
+        if len(words) > 1 and w_low in _LOWERCASE_NAME_WORDS:
+            norm_words.append(w_low)
+            continue
+        raw_parts = w.split("-")
+        parts = []
+        for p_idx, p in enumerate(raw_parts):
+            if not p:
+                parts.append("")
+                continue
+            p_low = p.lower()
+            if p_idx > 0 and (p_low in _LOWERCASE_HYPHEN_SUFFIXES or p_low in _LOWERCASE_NAME_WORDS):
+                parts.append(p_low)
+            else:
+                parts.append(p[:1].upper() + p[1:].lower())
+        norm_words.append("-".join(parts))
+    return " ".join(norm_words)
+
+
 def format_player_button_text(p, prefix="👤"):
     """
     Formats player display text for Telegram inline keyboard buttons.
@@ -698,9 +738,9 @@ def generate_roster_csv(teams_list):
             raw_st = p.get("status", "B")
             status = status_map.get(raw_st, "Б")
             idplayer = str(p.get("player_id") or "")
-            surname = (p.get("surname") or "").replace(";", ",")
-            name = (p.get("name") or "").replace(";", ",")
-            patronymic = (p.get("patronymic") or "").replace(";", ",")
+            surname = normalize_person_name_part(p.get("surname") or "").replace(";", ",")
+            name = normalize_person_name_part(p.get("name") or "").replace(";", ",")
+            patronymic = normalize_person_name_part(p.get("patronymic") or "").replace(";", ",")
             row = f"{idteam};{team_name};{town};{status};{idplayer};{surname};{name};{patronymic};"
             rows.append(row)
     return "\n".join(rows)
@@ -1018,7 +1058,14 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
     results = []
     seen_ids = set()
     seen_names = set()
-    query_clean = (query or "").strip().lower()
+    query_clean = (query or "").strip().lower().replace("ё", "е")
+    query_words = query_clean.split()
+
+    def matches_query(full_name_str):
+        if not query_words:
+            return True
+        norm_name = (full_name_str or "").lower().replace("ё", "е")
+        return all(w in norm_name for w in query_words)
 
     # 1. User profile & History players
     if user_id:
@@ -1027,7 +1074,7 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
             pid = mapping["rating_player_id"]
             pname = f"{mapping.get('surname', '')} {mapping.get('name', '')}".strip()
             full_name = f"{mapping.get('surname', '')} {mapping.get('name', '')} {mapping.get('patronymic', '')}".strip()
-            if not query_clean or query_clean in full_name.lower():
+            if matches_query(full_name):
                 entry = {
                     "id": pid,
                     "name": mapping.get("name", ""),
@@ -1046,16 +1093,19 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
             pid = hp.get("player_id") or hp.get("id")
             if pid and int(pid) in seen_ids:
                 continue
-            pname = f"{hp.get('surname', '')} {hp.get('name', '')}".strip()
-            full_name = f"{hp.get('surname', '')} {hp.get('name', '')} {hp.get('patronymic', '')}".strip()
-            if pname.lower() in seen_names:
+            hp_name = normalize_person_name_part(hp.get("name", ""))
+            hp_surname = normalize_person_name_part(hp.get("surname", ""))
+            hp_patronymic = normalize_person_name_part(hp.get("patronymic", ""))
+            pname = f"{hp_surname} {hp_name}".strip()
+            full_name = f"{hp_surname} {hp_name} {hp_patronymic}".strip()
+            if not pid and pname.lower() in seen_names:
                 continue
-            if not query_clean or query_clean in full_name.lower():
+            if matches_query(full_name):
                 entry = {
                     "id": pid,
-                    "name": hp.get("name", ""),
-                    "surname": hp.get("surname", ""),
-                    "patronymic": hp.get("patronymic", ""),
+                    "name": hp_name,
+                    "surname": hp_surname,
+                    "patronymic": hp_patronymic,
                     "town": hp.get("town", ""),
                     "source": "history",
                     "badge": "⭐ Ваша история",
@@ -1075,9 +1125,9 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
                     continue
                 pname = f"{tp.get('surname', '')} {tp.get('name', '')}".strip()
                 full_name = f"{tp.get('surname', '')} {tp.get('name', '')} {tp.get('patronymic', '')}".strip()
-                if pname.lower() in seen_names:
+                if not pid and pname.lower() in seen_names:
                     continue
-                if not query_clean or query_clean in full_name.lower():
+                if matches_query(full_name):
                     entry = {
                         "id": pid,
                         "name": tp.get("name", ""),
@@ -1109,9 +1159,9 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
                 continue
             pname = f"{vp.get('surname', '')} {vp.get('name', '')}".strip()
             full_name = f"{vp.get('surname', '')} {vp.get('name', '')} {vp.get('patronymic', '')}".strip()
-            if pname.lower() in seen_names:
+            if not pid and pname.lower() in seen_names:
                 continue
-            if not query_clean or query_clean in full_name.lower():
+            if matches_query(full_name):
                 entry = {
                     "id": pid,
                     "name": vp.get("name", ""),
@@ -1153,7 +1203,7 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
                     if pid and int(pid) in seen_ids:
                         continue
                     pname = f"{cp.get('surname', '')} {cp.get('name', '')}".strip()
-                    if pname.lower() in seen_names:
+                    if not pid and pname.lower() in seen_names:
                         continue
                     results.append(cp)
                     if pid:
@@ -1171,7 +1221,7 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
                         continue
                     pname = f"{ap.get('surname', '')} {ap.get('name', '')}".strip()
                     full_name = f"{ap.get('surname', '')} {ap.get('name', '')} {ap.get('patronymic', '')}".strip()
-                    if pname.lower() in seen_names:
+                    if not pid and pname.lower() in seen_names:
                         continue
                     entry = {
                         "id": pid,
@@ -1254,16 +1304,19 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
 
         for idx, hp in enumerate(history_players):
             pid = hp.get("player_id") or hp.get("id")
-            pname = f"{hp.get('surname', '')} {hp.get('name', '')}".strip()
+            hp_name = normalize_person_name_part(hp.get("name", ""))
+            hp_surname = normalize_person_name_part(hp.get("surname", ""))
+            hp_patronymic = normalize_person_name_part(hp.get("patronymic", ""))
+            pname = f"{hp_surname} {hp_name}".strip()
             if (pid and pid in roster_pids) or (pname.lower() in roster_names):
                 continue
             key = f"pid_{pid}" if pid else f"name_{pname.lower()}"
             if key not in candidates_map:
                 candidates_map[key] = {
                     "pid": pid,
-                    "name": hp.get("name", ""),
-                    "surname": hp.get("surname", ""),
-                    "patronymic": hp.get("patronymic", ""),
+                    "name": hp_name,
+                    "surname": hp_surname,
+                    "patronymic": hp_patronymic,
                     "town": hp.get("town", ""),
                     "pname": pname,
                     "category": "history",
