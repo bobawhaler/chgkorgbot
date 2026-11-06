@@ -17,6 +17,37 @@ class TestRosterPrompts(unittest.TestCase):
             has_expected_keyword = any(kw in prompt.lower() for kw in ["состав", "игроков", "боте", "бот"])
             self.assertTrue(has_expected_keyword, f"Prompt did not match expected wording: {prompt}")
 
+    def test_webapp_urls_and_markup(self):
+        # 1. get_webapp_url with and without start_param
+        url1 = helpers.get_webapp_url()
+        self.assertIn("/webapp/roster?v=", url1)
+        url2 = helpers.get_webapp_url(start_param="roster_123_456")
+        self.assertIn("&startapp=roster_123_456", url2)
+
+        # 2. get_webapp_direct_url without app name (standard bot PM link)
+        with patch.dict(os.environ, {"TELEGRAM_APP_NAME": ""}):
+            direct_pm = helpers.get_webapp_direct_url("roster_123_456")
+            self.assertEqual(direct_pm, "https://t.me/gamepollbot?start=roster_123_456")
+
+        # 3. get_webapp_direct_url with app name configured via BotFather
+        with patch.dict(os.environ, {"TELEGRAM_APP_NAME": "roster"}):
+            direct_app = helpers.get_webapp_direct_url("roster_123_456")
+            self.assertEqual(direct_app, "https://t.me/gamepollbot/roster?startapp=roster_123_456")
+
+        # 4. get_roster_inline_markup (web_app button for PM)
+        markup_pm = helpers.get_roster_inline_markup(text="📋 Открыть составы")
+        self.assertEqual(len(markup_pm["inline_keyboard"]), 1)
+        self.assertEqual(markup_pm["inline_keyboard"][0][0]["text"], "📋 Открыть составы")
+        self.assertIn("web_app", markup_pm["inline_keyboard"][0][0])
+        self.assertIn("/webapp/roster", markup_pm["inline_keyboard"][0][0]["web_app"]["url"])
+
+        # 5. get_group_roster_inline_markup (url button for groups)
+        markup_grp = helpers.get_group_roster_inline_markup(start_param="roster_123_456", text="📋 Сдать состав")
+        self.assertEqual(len(markup_grp["inline_keyboard"]), 1)
+        self.assertEqual(markup_grp["inline_keyboard"][0][0]["text"], "📋 Сдать состав")
+        self.assertIn("url", markup_grp["inline_keyboard"][0][0])
+        self.assertIn("roster_123_456", markup_grp["inline_keyboard"][0][0]["url"])
+
     @patch("datastore.get_datastore_client")
     def test_get_user_registration_reminders_count_empty(self, mock_client_func):
         mock_client = MagicMock()
@@ -239,6 +270,187 @@ class TestRosterPrompts(unittest.TestCase):
         self.assertIn("Тер-Акопян;Анна-Мария;", csv_text)
         self.assertIn("1907;Бабаева;Гюнель;Рафик гызы;", csv_text)
         self.assertIn("73840;Алиев;Мирза;Али оглы;", csv_text)
+
+    def test_export_roster_new_players_and_teams_no_id(self):
+        """Verifies that new players and new teams do NOT have IDs in CSV export."""
+        self.assertEqual(helpers.format_export_id(None), "")
+        self.assertEqual(helpers.format_export_id(""), "")
+        self.assertEqual(helpers.format_export_id("None"), "")
+        self.assertEqual(helpers.format_export_id("null"), "")
+        self.assertEqual(helpers.format_export_id(0), "")
+        self.assertEqual(helpers.format_export_id("0"), "")
+        self.assertEqual(helpers.format_export_id(-1), "")
+        self.assertEqual(helpers.format_export_id(346682), "346682")
+        self.assertEqual(helpers.format_export_id("109054"), "109054")
+
+        # Test full CSV generation with a new unrated team and new unrated players
+        teams = [
+            {
+                "team_name": "Новая Команда",
+                "display_name": "Новая Команда",
+                "rating_team_id": None,
+                "town": "Берлин",
+                "roster": [
+                    {
+                        "player_id": None,
+                        "surname": "Новичков",
+                        "name": "Иван",
+                        "patronymic": "",
+                        "status": "Б",
+                    },
+                    {
+                        "player_id": "None",  # corrupted/string None
+                        "surname": "Новичкова",
+                        "name": "Анна",
+                        "patronymic": "Сергеевна",
+                        "status": "К",
+                    },
+                    {
+                        "player_id": 12345,  # rated player
+                        "surname": "Опытный",
+                        "name": "Пётр",
+                        "patronymic": "Ильич",
+                        "status": "Л",
+                    },
+                ],
+            }
+        ]
+        csv_text = helpers.generate_roster_csv(teams)
+        lines = csv_text.splitlines()
+        self.assertEqual(len(lines), 3)
+
+        # 1st row: new team (idteam is empty), new player (idplayer is empty)
+        self.assertEqual(lines[0], ";Новая Команда;Берлин;Б;;Новичков;Иван;;")
+        # 2nd row: new team (idteam is empty), new player with "None" string (idplayer is empty)
+        self.assertEqual(lines[1], ";Новая Команда;Берлин;К;;Новичкова;Анна;Сергеевна;")
+        # 3rd row: new team (idteam is empty), rated player (idplayer is 12345)
+        self.assertEqual(lines[2], ";Новая Команда;Берлин;Л;12345;Опытный;Пётр;Ильич;")
+
+    @patch("telegram_api.edit_message_text")
+    @patch("telegram_api.set_message_reaction")
+    @patch("telegram_api.send_message")
+    @patch("datastore.get_team_registration_by_team_msg")
+    @patch("datastore.find_user_team_registration")
+    @patch("datastore.register_team_in_ds")
+    @patch("helpers.get_chat_collect_rosters")
+    def test_edited_message_renames_team(
+        self,
+        mock_collect_rosters,
+        mock_register_team,
+        mock_find_user_reg,
+        mock_get_reg_by_team_msg,
+        mock_send_msg,
+        mock_reaction,
+        mock_edit_msg,
+    ):
+        import handlers
+
+        mock_collect_rosters.return_value = True
+        reg = {
+            "sync_req_id": "12345",
+            "message_id": 999,
+            "tourn_name": "Весенний кубок",
+            "thread_id": 10,
+        }
+        mock_get_reg_by_team_msg.return_value = reg
+        mock_register_team.return_value = {
+            "teams": [{"team_name": "Новое название", "user_id": 777}]
+        }
+
+        body = {
+            "edited_message": {
+                "message_id": 555,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 777, "username": "captain", "first_name": "Cap"},
+                "text": "Новое название",
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_register_team.assert_called_once_with(
+            -1001, "12345", "Новое название", 777, "captain", message_id=555
+        )
+        mock_edit_msg.assert_called_once()
+        mock_reaction.assert_called_once_with(-1001, 555, "❤️")
+        # On edit, prompt for roster should NOT be sent
+        mock_send_msg.assert_not_called()
+
+    @patch("telegram_api.edit_message_text")
+    @patch("telegram_api.set_message_reaction")
+    @patch("telegram_api.send_message")
+    @patch("datastore.find_user_team_registration")
+    @patch("datastore.unregister_team_in_ds")
+    @patch("helpers.get_chat_collect_rosters")
+    def test_unregister_command_success(
+        self,
+        mock_collect_rosters,
+        mock_unregister_team,
+        mock_find_user_reg,
+        mock_send_msg,
+        mock_reaction,
+        mock_edit_msg,
+    ):
+        import handlers
+
+        mock_collect_rosters.return_value = True
+        reg = {
+            "sync_req_id": "12345",
+            "message_id": 999,
+            "tourn_name": "Весенний кубок",
+            "thread_id": 10,
+        }
+        team_info = {"team_name": "Победа", "display_name": "Победа", "user_id": 777}
+        mock_find_user_reg.return_value = (reg, team_info)
+        mock_unregister_team.return_value = {"teams": []}
+
+        body = {
+            "message": {
+                "message_id": 666,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 777, "username": "captain", "first_name": "Cap"},
+                "text": "/unregister",
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_find_user_reg.assert_called_once_with(-1001, 777, sync_req_id=None)
+        mock_unregister_team.assert_called_once_with(-1001, "12345", 777)
+        mock_edit_msg.assert_called_once()
+        mock_reaction.assert_called_once_with(-1001, 666, "❤️")
+        mock_send_msg.assert_called_once()
+        call_args = mock_send_msg.call_args[0]
+        self.assertIn("Регистрация команды", call_args[2])
+        self.assertIn("Победа", call_args[2])
+        self.assertIn("отменена", call_args[2])
+
+    @patch("telegram_api.send_message")
+    @patch("datastore.find_user_team_registration")
+    def test_unregister_command_no_registration(
+        self,
+        mock_find_user_reg,
+        mock_send_msg,
+    ):
+        import handlers
+
+        mock_find_user_reg.return_value = (None, None)
+
+        body = {
+            "message": {
+                "message_id": 777,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 888, "username": "nobody", "first_name": "Nobody"},
+                "text": "/unregister",
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_find_user_reg.assert_called_once_with(-1001, 888, sync_req_id=None)
+        mock_send_msg.assert_called_once()
+        call_args = mock_send_msg.call_args[0]
+        self.assertIn("У вас нет активной зарегистрированной команды", call_args[2])
 
 
 if __name__ == "__main__":

@@ -1315,6 +1315,7 @@
         }
 
         renderTournamentsList();
+        checkAndOpenStartParam();
         if (manual) showToast("Данные обновлены");
       } catch (err) {
         console.error("loadInitData error:", err);
@@ -1635,6 +1636,41 @@
             <button class="btn btn-secondary btn-sm" style="margin-top: 12px;" onclick="loadInitData(true)">&#128260; Повторить</button>
           </div>
         `;
+      }
+    }
+
+    function checkAndOpenStartParam() {
+      if (appData._startParamHandled) return;
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const rawParam = tg?.initDataUnsafe?.start_param || urlParams.get("startapp") || urlParams.get("start_param") || "";
+        if (!rawParam || !rawParam.startsWith("roster_")) return;
+
+        const parts = rawParam.split("_");
+        if (parts.length < 3) return;
+
+        const targetSyncId = parts[1];
+        const targetChatId = parts[2];
+
+        const tourns = appData.tournaments || [];
+        const tournIndex = tourns.findIndex(t => String(t.sync_req_id) === String(targetSyncId) && String(t.chat_id) === String(targetChatId));
+        if (tournIndex === -1) return;
+
+        appData._startParamHandled = true;
+        const tourn = tourns[tournIndex];
+        const myUid = appData.user?.id ? Number(appData.user.id) : null;
+
+        const teams = tourn.teams || [];
+        let targetTeamIndex = teams.findIndex(t => myUid && t.user_id && Number(t.user_id) === myUid);
+        if (targetTeamIndex === -1 && teams.length === 1 && !appData.canSwitchRoles) {
+          targetTeamIndex = 0;
+        }
+
+        if (targetTeamIndex !== -1) {
+          selectTournamentTeam(tournIndex, targetTeamIndex);
+        }
+      } catch (err) {
+        console.warn("checkAndOpenStartParam error:", err);
       }
     }
 

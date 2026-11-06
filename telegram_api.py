@@ -39,7 +39,7 @@ def get_webhook():
     return resp.json()
 
 
-def set_chat_menu_button(chat_id=None, text="Составы", web_app_url=None):
+def set_chat_menu_button(chat_id=None, text="📋 Составы", web_app_url=None):
     t0 = time.perf_counter()
     url = web_app_url or helpers.get_webapp_url()
     payload = {

@@ -445,11 +445,15 @@ def cache_player(pid, pdata):
     if not pid or not pdata:
         return
     try:
+        real_pid = pdata.get("id") or pdata.get("player_id") or pid
+        if not real_pid or not str(real_pid).isdigit() or int(real_pid) <= 0:
+            return
+        real_pid_int = int(real_pid)
         datastore_client = get_datastore_client()
-        key = datastore_client.key("CachedPlayer", str(pid))
+        key = datastore_client.key("CachedPlayer", str(real_pid_int))
         entity = datastore.Entity(key=key)
         entity.update({
-            "player_id": int(pid),
+            "player_id": real_pid_int,
             "name": pdata.get("name", ""),
             "surname": pdata.get("surname", ""),
             "patronymic": pdata.get("patronymic", ""),
@@ -631,7 +635,61 @@ def get_team_registration_by_msg(chat_id, message_id):
     return None
 
 
-def register_team_in_ds(chat_id, sync_req_id, team_name, user_id, username):
+def get_team_registration_by_team_msg(chat_id, message_id):
+    """
+    Finds active TeamRegistration entity where a team was registered by or has the given message_id.
+    """
+    if not chat_id or not message_id:
+        return None
+    try:
+        datastore_client = get_datastore_client()
+        query = datastore_client.query(kind="TeamRegistration")
+        query.add_filter(filter=PropertyFilter("status", "=", "active"))
+        target_cid = str(chat_id)
+        target_mid = int(message_id)
+
+        for entity in query.fetch(limit=100):
+            if str(entity.get("chat_id", "")) != target_cid:
+                continue
+            for t in entity.get("teams", []):
+                if t.get("message_id") == target_mid:
+                    return entity
+    except Exception as e:
+        print(f"Error in get_team_registration_by_team_msg: {e}")
+    return None
+
+
+def find_user_team_registration(chat_id, user_id, sync_req_id=None):
+    """
+    Finds the active TeamRegistration entity in chat_id where user_id has a registered team.
+    If sync_req_id is provided, checks that specific registration first.
+    Returns (entity, team_dict) or (None, None).
+    """
+    if not chat_id or not user_id:
+        return None, None
+    try:
+        datastore_client = get_datastore_client()
+        if sync_req_id:
+            key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
+            entity = datastore_client.get(key)
+            if entity and entity.get("status") == "active":
+                for t in entity.get("teams", []):
+                    if t.get("user_id") == user_id:
+                        return entity, t
+        query = datastore_client.query(kind="TeamRegistration")
+        query.add_filter(filter=PropertyFilter("status", "=", "active"))
+        query.add_filter(filter=PropertyFilter("chat_id", "=", int(chat_id)))
+        entities = _sort_registrations_newest_first(list(query.fetch(limit=20)))
+        for entity in entities:
+            for t in entity.get("teams", []):
+                if t.get("user_id") == user_id:
+                    return entity, t
+    except Exception as e:
+        print(f"Error in find_user_team_registration: {e}")
+    return None, None
+
+
+def register_team_in_ds(chat_id, sync_req_id, team_name, user_id, username, message_id=None):
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
     with datastore_client.transaction():
@@ -647,12 +705,14 @@ def register_team_in_ds(chat_id, sync_req_id, team_name, user_id, username):
                 team["team_name"] = team_name
                 team["display_name"] = team_name
                 team["username"] = username
+                if message_id:
+                    team["message_id"] = int(message_id)
                 team["registered_at"] = datetime.datetime.now(pytz.utc).isoformat()
                 updated = True
                 break
                 
         if not updated:
-            teams.append({
+            team_dict = {
                 "team_name": team_name,
                 "user_id": user_id,
                 "username": username,
@@ -660,7 +720,10 @@ def register_team_in_ds(chat_id, sync_req_id, team_name, user_id, username):
                 "rating_team_id": None,
                 "display_name": team_name,
                 "roster": [],
-            })
+            }
+            if message_id:
+                team_dict["message_id"] = int(message_id)
+            teams.append(team_dict)
             
         entity["teams"] = teams
         datastore_client.put(entity)
@@ -921,22 +984,37 @@ def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team
                         matched_idx = idx
                         break
 
-        conflict_err = check_roster_conflicts(teams, roster, current_team_idx=matched_idx)
+        clean_tid = int(rating_team_id) if rating_team_id and str(rating_team_id).isdigit() and int(rating_team_id) > 0 else None
+        clean_roster = []
+        for p in roster:
+            if isinstance(p, dict):
+                raw_pid = p.get("player_id") or p.get("id")
+                clean_pid = int(raw_pid) if raw_pid and str(raw_pid).isdigit() and int(raw_pid) > 0 else None
+                clean_roster.append({
+                    **p,
+                    "player_id": clean_pid,
+                    "name": _norm_name_part(p.get("name", "")),
+                    "surname": _norm_name_part(p.get("surname", "")),
+                    "patronymic": _norm_name_part(p.get("patronymic", "")),
+                })
+            else:
+                clean_roster.append(p)
+
+        conflict_err = check_roster_conflicts(teams, clean_roster, current_team_idx=matched_idx)
         if conflict_err:
             raise ValueError(conflict_err)
 
         if matched_idx is not None and 0 <= matched_idx < len(teams):
             team = teams[matched_idx]
-            if rating_team_id is not None:
-                team["rating_team_id"] = rating_team_id
+            team["rating_team_id"] = clean_tid
             if team_name:
                 team["team_name"] = team_name
             if display_name:
                 team["display_name"] = display_name
             if town is not None:
                 team["town"] = town
-            team["roster"] = roster
-            team["roster_submitted"] = bool(roster and len(roster) > 0)
+            team["roster"] = clean_roster
+            team["roster_submitted"] = bool(clean_roster and len(clean_roster) > 0)
             if team["roster_submitted"]:
                 team["rejection_comment"] = None
             team["submitted_externally"] = False
@@ -945,11 +1023,11 @@ def update_team_roster_in_ds(chat_id, sync_req_id, user_id, rating_team_id, team
             teams.append({
                 "team_name": team_name or display_name or registered_name or "Команда",
                 "display_name": display_name or team_name or registered_name or "Команда",
-                "rating_team_id": rating_team_id,
+                "rating_team_id": clean_tid,
                 "town": town or "",
                 "user_id": target_user_id or user_id,
-                "roster": roster,
-                "roster_submitted": bool(roster and len(roster) > 0),
+                "roster": clean_roster,
+                "roster_submitted": bool(clean_roster and len(clean_roster) > 0),
                 "submitted_externally": False,
                 "submitted_at": datetime.datetime.now(pytz.utc).isoformat()
             })
@@ -1159,6 +1237,7 @@ def get_user_history(user_id):
 
 
 def add_user_history_team(user_id, team_id, team_name, town="", display_name=""):
+    clean_tid = int(team_id) if team_id and str(team_id).isdigit() and int(team_id) > 0 else None
     datastore_client = get_datastore_client()
     key = datastore_client.key("UserHistory", str(user_id))
     with datastore_client.transaction():
@@ -1174,8 +1253,8 @@ def add_user_history_team(user_id, team_id, team_name, town="", display_name="")
         # Deduplicate team
         existing = False
         for t in teams:
-            if (team_id and t.get("team_id") == team_id) or (t.get("name", "").lower() == team_name.lower()):
-                t["team_id"] = team_id or t.get("team_id")
+            if (clean_tid and t.get("team_id") == clean_tid) or (t.get("name", "").lower() == team_name.lower()):
+                t["team_id"] = clean_tid or t.get("team_id")
                 t["name"] = team_name
                 if town:
                     t["town"] = town
@@ -1187,7 +1266,7 @@ def add_user_history_team(user_id, team_id, team_name, town="", display_name="")
                 existing = True
                 break
         if not existing:
-            item = {"team_id": team_id, "name": team_name}
+            item = {"team_id": clean_tid, "name": team_name}
             if town:
                 item["town"] = town
             if display_name:
@@ -1200,6 +1279,7 @@ def add_user_history_team(user_id, team_id, team_name, town="", display_name="")
 
 
 def add_user_history_player(user_id, player_id, name, surname, patronymic=""):
+    clean_pid = int(player_id) if player_id and str(player_id).isdigit() and int(player_id) > 0 else None
     name = _norm_name_part(name)
     surname = _norm_name_part(surname)
     patronymic = _norm_name_part(patronymic)
@@ -1218,12 +1298,12 @@ def add_user_history_player(user_id, player_id, name, surname, patronymic=""):
         now_str = datetime.datetime.now(pytz.utc).isoformat()
         existing_p = None
         for i, p in enumerate(players):
-            if (player_id and p.get("player_id") == player_id) or (p.get("surname", "").lower() == surname.lower() and p.get("name", "").lower() == name.lower()):
+            if (clean_pid and p.get("player_id") == clean_pid) or (p.get("surname", "").lower() == surname.lower() and p.get("name", "").lower() == name.lower()):
                 existing_p = players.pop(i)
                 break
 
         if existing_p:
-            existing_p["player_id"] = player_id or existing_p.get("player_id")
+            existing_p["player_id"] = clean_pid or existing_p.get("player_id")
             existing_p["name"] = name or _norm_name_part(existing_p.get("name", ""))
             existing_p["surname"] = surname or _norm_name_part(existing_p.get("surname", ""))
             existing_p["patronymic"] = patronymic or _norm_name_part(existing_p.get("patronymic", ""))
@@ -1232,7 +1312,7 @@ def add_user_history_player(user_id, player_id, name, surname, patronymic=""):
             players.insert(0, existing_p)
         else:
             players.insert(0, {
-                "player_id": player_id,
+                "player_id": clean_pid,
                 "name": name,
                 "surname": surname,
                 "patronymic": patronymic,
@@ -1562,6 +1642,83 @@ def save_venue_sync_state(venue_id, last_synced_at, synced_req_ids):
         datastore_client.put(entity)
     except Exception as e:
         print(f"Error saving venue_sync_state for venue {venue_id}: {e}")
+
+
+def sync_tournament_results_to_ds(sync_req_id, venue_id, results_list):
+    """
+    When tournament results are published on rating.chgk.info, this synchronizes the
+    newly assigned official team and player IDs back to TeamRegistration and UserHistory.
+    """
+    if not results_list or not sync_req_id:
+        return
+    try:
+        datastore_client = get_datastore_client()
+        query = datastore_client.query(kind="TeamRegistration")
+        query.add_filter(filter=PropertyFilter("sync_req_id", "=", str(sync_req_id)))
+        regs = list(query.fetch(limit=10))
+
+        for reg in regs:
+            updated = False
+            teams = list(reg.get("teams", []))
+            for t in teams:
+                t_name = (t.get("display_name") or t.get("team_name") or "").strip().lower()
+                uid = t.get("user_id")
+
+                for res_item in results_list:
+                    team_obj = res_item.get("team") if isinstance(res_item.get("team"), dict) else {}
+                    res_tid = team_obj.get("id") or res_item.get("idteam")
+                    res_tname = (team_obj.get("name") or "").strip().lower()
+                    cur_obj = res_item.get("current") if isinstance(res_item.get("current"), dict) else {}
+                    res_cname = (cur_obj.get("name") or res_item.get("current_name") or "").strip().lower()
+
+                    matches_team = False
+                    if t_name and (t_name == res_tname or t_name == res_cname):
+                        matches_team = True
+                    elif t.get("rating_team_id") and res_tid and int(t.get("rating_team_id")) == int(res_tid):
+                        matches_team = True
+
+                    if matches_team:
+                        if res_tid and t.get("rating_team_id") != int(res_tid):
+                            t["rating_team_id"] = int(res_tid)
+                            updated = True
+
+                        # Match roster players
+                        site_members = res_item.get("teamMembers", [])
+                        roster = list(t.get("roster", []))
+                        for p in roster:
+                            p_sur = (p.get("surname") or "").strip().lower().replace("ё", "е")
+                            p_nam = (p.get("name") or "").strip().lower().replace("ё", "е")
+                            for sm in site_members:
+                                pl_obj = sm.get("player") if isinstance(sm.get("player"), dict) else {}
+                                sm_id = pl_obj.get("id") or sm.get("idplayer")
+                                sm_sur = (pl_obj.get("surname") or "").strip().lower().replace("ё", "е")
+                                sm_nam = (pl_obj.get("name") or "").strip().lower().replace("ё", "е")
+                                if p_sur == sm_sur and p_nam == sm_nam and sm_id:
+                                    real_pid = int(sm_id)
+                                    if p.get("player_id") != real_pid:
+                                        p["player_id"] = real_pid
+                                        updated = True
+                                    # Cache player in CachedPlayer
+                                    cache_player(real_pid, {
+                                        "id": real_pid,
+                                        "name": pl_obj.get("name") or p.get("name"),
+                                        "surname": pl_obj.get("surname") or p.get("surname"),
+                                        "patronymic": pl_obj.get("patronymic") or p.get("patronymic"),
+                                        "town": t.get("town") or "",
+                                    })
+                                    # Update user history if user_id present
+                                    if uid:
+                                        add_user_history_player(uid, real_pid, p.get("name"), p.get("surname"), p.get("patronymic", ""))
+                                    break
+                        t["roster"] = roster
+                        if uid and res_tid:
+                            add_user_history_team(uid, int(res_tid), t.get("team_name"), town=t.get("town", ""), display_name=t.get("display_name", ""))
+                        break
+            if updated:
+                reg["teams"] = teams
+                datastore_client.put(reg)
+    except Exception as e:
+        print(f"Error syncing tournament results to ds for sync_req={sync_req_id}: {e}")
 
 
 def get_venue_data(venue_id):

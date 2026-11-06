@@ -316,16 +316,20 @@ def get_active_gemini_model():
     if ACTIVE_GEMINI_MODEL:
         return ACTIVE_GEMINI_MODEL
 
+    env_model = os.environ.get("GEMINI_MODEL")
+    if env_model:
+        ACTIVE_GEMINI_MODEL = env_model.replace("models/", "").strip()
+        return ACTIVE_GEMINI_MODEL
+
     try:
         persisted = datastore.get_gemini_active_model()
-        if persisted:
+        if persisted and persisted != "gemini-3.6-flash":
             ACTIVE_GEMINI_MODEL = persisted
             return ACTIVE_GEMINI_MODEL
     except Exception as e:
         print(f"Error reading persisted Gemini model: {e}")
 
-    env_model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash").replace("models/", "")
-    ACTIVE_GEMINI_MODEL = env_model
+    ACTIVE_GEMINI_MODEL = "gemini-flash-latest"
     return ACTIVE_GEMINI_MODEL
 
 
@@ -636,17 +640,25 @@ def get_default_poll_closing_time():
     return datetime.datetime.now() + relativedelta(months=1)
 
 
-def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams, include_roster_prompt=True):
+def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams, include_roster_prompt=True, sync_req_id=None, chat_id=None):
     lines = [
         f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
         "",
         "📝 <b>Регистрация команд открыта!</b>",
         "<i>Ответьте (reply) на это сообщение названием вашей команды для регистрации.</i>",
-        "<i>Для отмены ответьте <code>/unregister</code>.</i>",
+        "<i>Для отмены нажмите /unregister</i>",
     ]
     if include_roster_prompt:
-        bot_username = get_bot_username()
-        lines.append(f'<i>Для сдачи состава через бота можно перейти <a href="https://t.me/{bot_username}?start=roster">в ЛС</a> и нажать кнопку «Составы».</i>')
+        m = re.search(r'/tournament/(\d+)', str(url or ""))
+        s_id = sync_req_id or (m.group(1) if m else None)
+        if s_id and chat_id:
+            start_param = f"roster_{s_id}_{chat_id}"
+        elif s_id:
+            start_param = f"roster_{s_id}"
+        else:
+            start_param = "roster"
+        direct_url = get_webapp_direct_url(start_param=start_param)
+        lines.append(f'<i>Для сдачи состава откройте приложение <a href="{direct_url}">«📋 Составы»</a>.</i>')
     lines.extend([
         "",
         f"<b>Зарегистрированные команды ({len(teams)}):</b>",
@@ -722,6 +734,21 @@ def get_random_roster_prompt(link_url):
 
 
 
+def format_export_id(raw_id):
+    """
+    Returns valid numeric string ID for CSV export, or empty string '' if new/unrated or invalid.
+    New players and new teams must NOT have an ID in the export CSV (rating.chgk.info assigns it on import).
+    """
+    if raw_id is None:
+        return ""
+    val_str = str(raw_id).strip()
+    if not val_str or val_str.lower() in ("none", "null", "0", "-1"):
+        return ""
+    if val_str.isdigit() and int(val_str) > 0:
+        return str(int(val_str))
+    return ""
+
+
 def generate_roster_csv(teams_list):
     """
     Generates CSV string formatted for rating.chgk.info import without header row:
@@ -730,14 +757,14 @@ def generate_roster_csv(teams_list):
     rows = []
     status_map = {"K": "К", "B": "Б", "L": "Л", "К": "К", "Б": "Б", "Л": "Л"}
     for t in teams_list:
-        idteam = str(t.get("rating_team_id") or "")
+        idteam = format_export_id(t.get("rating_team_id"))
         team_name = (t.get("display_name") or t.get("team_name") or "").replace(";", ",")
         town = (t.get("town") or "").replace(";", ",")
         roster = t.get("roster", [])
         for p in roster:
             raw_st = p.get("status", "B")
             status = status_map.get(raw_st, "Б")
-            idplayer = str(p.get("player_id") or "")
+            idplayer = format_export_id(p.get("player_id"))
             surname = normalize_person_name_part(p.get("surname") or "").replace(";", ",")
             name = normalize_person_name_part(p.get("name") or "").replace(";", ",")
             patronymic = normalize_person_name_part(p.get("patronymic") or "").replace(";", ",")
@@ -820,17 +847,71 @@ def validate_telegram_init_data(init_data_raw, bot_token=None):
     return None
 
 
-def get_webapp_url():
+def get_webapp_url(start_param=None):
     """
     Returns the absolute HTTPS URL of the Mini App.
+    Optionally appends start_param for initial state routing.
     """
     import time
     project_id = os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT") or "chgkorgbot"
     custom_domain = os.environ.get("WEBAPP_URL")
     ts = int(time.time())
-    if custom_domain:
-        return f"{custom_domain.rstrip('/')}/webapp/roster?v={ts}"
-    return f"https://{project_id}.appspot.com/webapp/roster?v={ts}"
+    base_url = f"{custom_domain.rstrip('/')}/webapp/roster" if custom_domain else f"https://{project_id}.appspot.com/webapp/roster"
+    url = f"{base_url}?v={ts}"
+    if start_param:
+        url += f"&startapp={start_param}"
+    return url
+
+
+def get_webapp_direct_url(start_param=None):
+    """
+    Returns the link to open the Mini App.
+    If TELEGRAM_APP_NAME or MINIAPP_SHORT_NAME is set in the environment (configured via BotFather /newapp),
+    returns a direct mini app link: https://t.me/<bot_username>/<app_name>?startapp=<start_param>
+    Otherwise, returns standard bot start link: https://t.me/<bot_username>?start=<start_param>
+    """
+    bot_username = get_bot_username()
+    app_name = os.environ.get("TELEGRAM_APP_NAME") or os.environ.get("MINIAPP_SHORT_NAME")
+    param_str = str(start_param or "roster").strip()
+    if app_name:
+        return f"https://t.me/{bot_username}/{app_name}?startapp={param_str}"
+    return f"https://t.me/{bot_username}?start={param_str}"
+
+
+def get_roster_inline_markup(webapp_url=None, text="📋 Открыть составы"):
+    """
+    Inline keyboard with a Web App button for 1-on-1 private chat with the bot.
+    Tapping this button opens the Mini App immediately.
+    """
+    url = webapp_url or get_webapp_url()
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": text,
+                    "web_app": {"url": url}
+                }
+            ]
+        ]
+    }
+
+
+def get_group_roster_inline_markup(start_param="roster", text="📋 Сдать состав"):
+    """
+    Inline keyboard with a URL button for group chats.
+    Opens direct Mini App link if configured or bot PM link.
+    """
+    direct_url = get_webapp_direct_url(start_param=start_param)
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": text,
+                    "url": direct_url
+                }
+            ]
+        ]
+    }
 
 
 def trigger_venue_sync(venue_id):

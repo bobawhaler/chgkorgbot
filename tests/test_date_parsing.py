@@ -97,5 +97,24 @@ class TestDateParsing(unittest.TestCase):
             self.assertTrue(res[0]["rating"])
 
 
+    def test_get_active_gemini_model_default_and_env(self):
+        # 1. Environment variable override
+        helpers.ACTIVE_GEMINI_MODEL = None
+        with patch.dict("os.environ", {"GEMINI_MODEL": "gemini-flash-latest"}):
+            self.assertEqual(helpers.get_active_gemini_model(), "gemini-flash-latest")
+
+        # 2. Default when env and datastore are empty
+        helpers.ACTIVE_GEMINI_MODEL = None
+        with patch.dict("os.environ", {}, clear=True), \
+             patch("datastore.get_gemini_active_model", return_value=None):
+            self.assertEqual(helpers.get_active_gemini_model(), "gemini-flash-latest")
+
+        # 3. Ignores obsolete gemini-3.6-flash from datastore
+        helpers.ACTIVE_GEMINI_MODEL = None
+        with patch.dict("os.environ", {}, clear=True), \
+             patch("datastore.get_gemini_active_model", return_value="gemini-3.6-flash"):
+            self.assertEqual(helpers.get_active_gemini_model(), "gemini-flash-latest")
+
+
 if __name__ == "__main__":
     unittest.main()

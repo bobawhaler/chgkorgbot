@@ -756,6 +756,11 @@ def sync_venue_history(venue_id, months=12):
             )
             if r_res.ok and isinstance(r_res.json(), list):
                 results_list = r_res.json()
+                try:
+                    datastore.sync_tournament_results_to_ds(s_id, venue_id, results_list)
+                except Exception as exc:
+                    print(f"Error syncing tournament results to datastore for sync_req={s_id}: {exc}")
+
                 for res_item in results_list:
                     # Verify matching venue or synchRequest if present in result item
                     sr = res_item.get("synchRequest")

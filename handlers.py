@@ -42,10 +42,10 @@ def build_help_text(chat_id, is_private=True):
         sections.append(tourn_help)
         roster_help_lines = []
         if collect_rosters:
-            roster_help_lines.append("• Кнопка <b>«Составы»</b> внизу экрана (или <code>/roster</code>, <code>/myteams</code>) — форма для сдачи и управления составами")
+            roster_help_lines.append("• Кнопка <b>«📋 Составы»</b> внизу экрана (или <code>/roster</code>, <code>/myteams</code>) — форма для сдачи и управления составами")
         roster_help_lines.append("• <code>/rosters</code> (или <code>/exportroster</code>, <code>/csv</code>) — статус сбора составов и скачивание CSV для сайта рейтинга")
         if collect_rosters:
-            roster_help_lines.append("• <code>/setmyid &lt;ID_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка профиля на сайте рейтинга (также доступна в разделе «Составы»)")
+            roster_help_lines.append("• <code>/setmyid &lt;ID_или_ФИО&gt;</code> (или <code>/myid</code>) — привязка профиля на сайте рейтинга (также доступна в разделе «📋 Составы»)")
         sections.append("<b>Управление составами команд:</b>\n" + "\n".join(roster_help_lines))
         sections.append(
             "<b>Настройки:</b>\n"
@@ -258,10 +258,13 @@ def system_tic_handler():
                     msg_text = (
                         f"⏰ <b>Напоминание о сдаче состава!</b>\n\n"
                         f"Наступило время турнира <b>\"{tourn_name}\"</b>.\n"
-                        f"Пожалуйста, сдайте состав вашей команды <b>\"{team_name}\"</b>.\n\n"
-                        f"Нажмите кнопку <b>«Составы»</b> внизу экрана или отправьте /roster в этот личный чат с ботом."
+                        f"Пожалуйста, сдайте состав вашей команды <b>\"{team_name}\"</b>."
                     )
-                    pm_res = telegram_api.send_message(user_id, None, msg_text, formatted=True)
+                    markup = helpers.get_roster_inline_markup(
+                        webapp_url=helpers.get_webapp_url(start_param=f"roster_{reg.get('sync_req_id')}_{chat_id}"),
+                        text="📋 Сдать состав"
+                    )
+                    pm_res = telegram_api.send_message(user_id, None, msg_text, formatted=True, reply_markup=markup)
                     if pm_res and pm_res.ok:
                         datastore.mark_user_bot_started(user_id)
                     elif pm_res and pm_res.status_code == 403:
@@ -298,7 +301,7 @@ def handle_callback_query(cq):
     if cq_id:
         telegram_api.answer_callback_query(
             cq_id,
-            text="Сдача и управление составами команд выполняются по кнопке «Составы» внизу экрана.",
+            text="Сдача и управление составами команд выполняются по кнопке «📋 Составы» внизу экрана.",
             show_alert=True
         )
 
@@ -479,33 +482,48 @@ def handle_private_message(body):
         group_chat_id = chat_id
         datastore.add_team_registration(group_chat_id, None, sync_req_id, 999999, "Тестовый кубок сообщества", "Представитель: Тест", "Ведущий: Тест", "19:00")
         datastore.register_team_in_ds(group_chat_id, sync_req_id, "Тестовые знатоки", user_id, "user")
-        telegram_api.send_message(chat_id, None, "Тестовый турнир создан. Откройте раздел «Составы» для ввода состава.")
-        return True
-
-    if text.startswith("/start"):
-        telegram_api.set_chat_menu_button(chat_id=chat_id, text="Составы")
-        parts = text.split()
-        if len(parts) > 1 and parts[1].startswith("roster_"):
-            params = parts[1].split("_")
-            if len(params) >= 3:
-                sync_req_id = params[1]
-                group_chat_id = int(params[2])
-                reg = datastore.get_team_registration(group_chat_id, sync_req_id)
-                tourn_name = reg.get("tourn_name", "Турнир") if reg else ""
-                tourn_str = f" на турнир <b>«{tourn_name}»</b>" if tourn_name else ""
-                telegram_api.send_message(
-                    chat_id,
-                    None,
-                    f"Для ввода и редактирования состава команды{tourn_str} нажмите кнопку <b>«Составы»</b> внизу экрана рядом со строкой ввода.",
-                    formatted=True,
-                )
-                return True
-
+        markup = helpers.get_roster_inline_markup(
+            webapp_url=helpers.get_webapp_url(start_param=f"roster_{sync_req_id}_{group_chat_id}"),
+            text="📋 Открыть тестовый состав"
+        )
         telegram_api.send_message(
             chat_id,
             None,
-            "Привет! Для ввода и управления составами ваших команд нажмите кнопку <b>«Составы»</b> в левом нижнем углу рядом со строкой ввода.",
+            "Тестовый турнир создан. Нажмите кнопку ниже для ввода состава:",
+            reply_markup=markup,
+        )
+        return True
+
+    if text.startswith("/start"):
+        telegram_api.set_chat_menu_button(chat_id=chat_id, text="📋 Составы")
+        parts = text.split()
+        if len(parts) > 1:
+            raw_param = parts[1].replace("startapp=", "").strip()
+            if raw_param.startswith("roster_"):
+                params = raw_param.split("_")
+                sync_req_id = params[1] if len(params) >= 2 else None
+                group_chat_id = int(params[2]) if len(params) >= 3 and params[2].lstrip("-").isdigit() else None
+                reg = datastore.get_team_registration(group_chat_id, sync_req_id) if group_chat_id and sync_req_id else None
+                tourn_name = reg.get("tourn_name", "") if reg else ""
+                tourn_str = f" на турнир <b>«{tourn_name}»</b>" if tourn_name else ""
+                webapp_url = helpers.get_webapp_url(start_param=raw_param)
+                markup = helpers.get_roster_inline_markup(webapp_url=webapp_url, text="📋 Открыть состав команды")
+                telegram_api.send_message(
+                    chat_id,
+                    None,
+                    f"Для ввода и редактирования состава команды{tourn_str} нажмите кнопку ниже:",
+                    formatted=True,
+                    reply_markup=markup,
+                )
+                return True
+
+        markup = helpers.get_roster_inline_markup(text="📋 Открыть составы")
+        telegram_api.send_message(
+            chat_id,
+            None,
+            "Привет! Для ввода и управления составами ваших команд нажмите кнопку ниже:",
             formatted=True,
+            reply_markup=markup,
         )
         return True
 
@@ -515,7 +533,14 @@ def handle_private_message(body):
     if text.startswith("/") or text.lower() in ("отмена", "cancel", "stop", "назад"):
         if text in ("/cancel", "/stop") or text.lower() in ("отмена", "cancel", "stop", "назад"):
             datastore.clear_user_state(user_id)
-            telegram_api.send_message(chat_id, None, "❌ <b>Действие отменено.</b>\n<i>Для сдачи составов используйте кнопку «Составы» внизу экрана.</i>", formatted=True)
+            markup = helpers.get_roster_inline_markup(text="📋 Открыть составы")
+            telegram_api.send_message(
+                chat_id,
+                None,
+                "❌ <b>Действие отменено.</b>\n<i>Для сдачи составов нажмите кнопку ниже:</i>",
+                formatted=True,
+                reply_markup=markup,
+            )
             return True
         elif text.startswith("/"):
             datastore.clear_user_state(user_id)
@@ -564,18 +589,20 @@ def handle_private_message(body):
         if mapping and mapping.get("rating_player_id"):
             fio = f"{mapping.get('surname')} {mapping.get('name')} {mapping.get('patronymic', '')}".strip()
             town_str = f" ({mapping['town']})" if mapping.get("town") else ""
-            telegram_api.send_message(chat_id, None, f"👤 <b>Ваш привязанный профиль сайта рейтинга:</b>\n\n[ID {mapping['rating_player_id']}] <b>{fio}</b>{town_str}\n\n<i>Для смены отправьте <code>/setmyid <новое ID или ФИО></code> или привяжите в разделе «Составы».</i>", formatted=True)
+            telegram_api.send_message(chat_id, None, f"👤 <b>Ваш привязанный профиль сайта рейтинга:</b>\n\n[ID {mapping['rating_player_id']}] <b>{fio}</b>{town_str}\n\n<i>Для смены отправьте <code>/setmyid <новое ID или ФИО></code> или привяжите в разделе «📋 Составы».</i>", formatted=True)
         else:
-            telegram_api.send_message(chat_id, None, "У вас пока не привязан профиль сайта рейтинга.\n\nОтправьте <code>/setmyid <ваш ID рейтинга или ФИО></code> или привяжите в разделе «Составы».", formatted=True)
+            telegram_api.send_message(chat_id, None, "У вас пока не привязан профиль сайта рейтинга.\n\nОтправьте <code>/setmyid <ваш ID рейтинга или ФИО></code> или привяжите в разделе «📋 Составы».", formatted=True)
         return True
 
     if text in ("/myteams", "/roster", "/miniapp", "/app"):
-        telegram_api.set_chat_menu_button(chat_id=chat_id, text="Составы")
+        telegram_api.set_chat_menu_button(chat_id=chat_id, text="📋 Составы")
+        markup = helpers.get_roster_inline_markup(text="📋 Открыть составы")
         telegram_api.send_message(
             chat_id,
             None,
-            "Для ввода и управления составами ваших команд нажмите кнопку <b>«Составы»</b> в левом нижнем углу рядом со строкой ввода.",
+            "Для ввода и управления составами ваших команд нажмите кнопку ниже:",
             formatted=True,
+            reply_markup=markup,
         )
         return True
 
@@ -610,8 +637,11 @@ def command_handler(body):
         if body and "poll_answer" in body:
             print(body["poll_answer"])
 
-        if body and "message" in body and "text" in body["message"]:
-            msg = body["message"]
+        msg_obj = body.get("message") or body.get("edited_message") if body else None
+        is_edit = bool(body and "edited_message" in body)
+
+        if msg_obj and "text" in msg_obj:
+            msg = msg_obj
             msg_text = msg.get("text", "").strip()
             chat = msg.get("chat", {})
             from_user = msg.get("from", {})
@@ -682,14 +712,14 @@ def command_handler(body):
             inp = [s for s in msg_text.split() if not s.startswith("@")]
             thread_id = None
             if (
-                "is_forum" in body["message"]["chat"]
-                and body["message"]["chat"]["is_forum"]
+                "is_forum" in chat
+                and chat.get("is_forum")
             ):
                 chat_config = datastore.get_chat_config(chat_id)
                 if chat_config:
                     thread_id = chat_config.get("thread_id", None)
                 else:
-                    thread_id = body["message"].get("message_thread_id", None)
+                    thread_id = msg_thread_id
 
             # Check testreg command
             if helpers.is_debug_allowed(user_id=user_id, chat_id=chat_id) and inp[0] == "/testreg":
@@ -701,7 +731,8 @@ def command_handler(body):
                 sync_req_id = f"test_{int(time.time())}"
                 
                 msg_text = helpers.format_team_registration_text(
-                    tourn_name, url, representative_text, narrator_text, start_time, []
+                    tourn_name, url, representative_text, narrator_text, start_time, [],
+                    sync_req_id=sync_req_id, chat_id=chat_id
                 )
                 resp = telegram_api.send_message(int(chat_id), thread_id, msg_text, formatted=True)
                 if resp and resp.ok:
@@ -723,85 +754,158 @@ def command_handler(body):
 
             # Check del command (admin only)
             if helpers.is_admin_user(user_id) and inp[0] == "/del":
-                if "reply_to_message" in body["message"]:
-                    target_mid = body["message"]["reply_to_message"]["message_id"]
+                if "reply_to_message" in msg:
+                    target_mid = msg["reply_to_message"]["message_id"]
                     telegram_api.delete_message(chat_id, target_mid)
-                telegram_api.delete_message(chat_id, body["message"]["message_id"])
+                telegram_api.delete_message(chat_id, msg_id)
                 return ""
 
             # Check react command (admin only)
             if helpers.is_admin_user(user_id) and inp[0] == "/react":
-                if "reply_to_message" in body["message"]:
-                    target_mid = body["message"]["reply_to_message"]["message_id"]
+                if "reply_to_message" in msg:
+                    target_mid = msg["reply_to_message"]["message_id"]
                     telegram_api.set_message_reaction(chat_id, target_mid, "❤️")
-                telegram_api.delete_message(chat_id, body["message"]["message_id"])
+                telegram_api.delete_message(chat_id, msg_id)
                 return ""
 
-            # Check if this message is a reply to a team registration announcement
-            if "reply_to_message" in body["message"]:
-                reply_msg_id = body["message"]["reply_to_message"]["message_id"]
-                reg = datastore.get_team_registration_by_msg(chat_id, reply_msg_id)
-                if reg:
-                    user_id = body["message"]["from"]["id"]
-                    username = body["message"]["from"].get("username", "")
-                    first_name = body["message"]["from"].get("first_name", "")
-                    last_name = body["message"]["from"].get("last_name", "")
-                    user_disp = username or f"{first_name} {last_name}".strip()
-                    
-                    raw_text = body["message"]["text"].strip()
-                    
-                    if raw_text.lower() in ("/unregister", "отмена") or raw_text.lower().startswith("/unregister") or raw_text.lower().startswith("отмена"):
-                        updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
-                        if updated_entity:
-                            teams = updated_entity.get("teams", [])
-                            url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
-                            collect_rosters = helpers.get_chat_collect_rosters(chat_id)
-                            new_text = helpers.format_team_registration_text(
-                                reg.get("tourn_name", ""),
-                                url,
-                                reg.get("representative_text", ""),
-                                reg.get("narrator_text", ""),
-                                reg.get("start_time", ""),
-                                teams,
-                                include_roster_prompt=collect_rosters,
-                            )
-                            telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
-                    elif not raw_text.startswith("/"):
-                        team_name = raw_text
-                        updated_entity = datastore.register_team_in_ds(chat_id, reg["sync_req_id"], team_name, user_id, user_disp)
-                        if updated_entity:
-                            teams = updated_entity.get("teams", [])
-                            url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
-                            collect_rosters = helpers.get_chat_collect_rosters(chat_id)
-                            new_text = helpers.format_team_registration_text(
-                                reg.get("tourn_name", ""),
-                                url,
-                                reg.get("representative_text", ""),
-                                reg.get("narrator_text", ""),
-                                reg.get("start_time", ""),
-                                teams,
-                                include_roster_prompt=collect_rosters,
-                            )
-                            telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
-                            telegram_api.set_message_reaction(chat_id, body["message"]["message_id"], "❤️")
+            # Check if this message is a reply to a team registration announcement or an edit of a registration
+            reg = None
+            if "reply_to_message" in msg:
+                reply_msg_id = msg["reply_to_message"].get("message_id")
+                reg = datastore.get_team_registration_by_msg(chat_id, reply_msg_id) or datastore.get_team_registration_by_team_msg(chat_id, reply_msg_id)
 
-                            if collect_rosters and user_id and not datastore.has_user_started_bot(user_id):
-                                if datastore.get_user_registration_reminders_count(user_id) < 3:
-                                    bot_username = helpers.get_bot_username()
-                                    link_url = f"https://t.me/{bot_username}?start=roster_{reg.get('sync_req_id')}_{chat_id}"
-                                    prompt_text = helpers.get_random_roster_prompt(link_url)
-                                    thread_id = body["message"].get("message_thread_id") or reg.get("thread_id")
-                                    telegram_api.send_message(
-                                        chat_id,
-                                        thread_id,
-                                        prompt_text,
-                                        formatted=True,
-                                        reply_to_message_id=body["message"]["message_id"]
-                                    )
-                                    datastore.increment_user_registration_reminders_count(user_id, username=username)
+            if not reg and is_edit:
+                reg = datastore.get_team_registration_by_team_msg(chat_id, msg_id)
+                if not reg:
+                    reg, _ = datastore.find_user_team_registration(chat_id, user_id)
+
+            if reg:
+                user_disp = username or f"{first_name} {last_name}".strip()
+                raw_text = msg_text
+                
+                if raw_text.lower() in ("/unregister", "отмена") or raw_text.lower().startswith(("/unregister", "отмена")):
+                    updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
+                    if updated_entity is not None:
+                        teams = updated_entity.get("teams", [])
+                        url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                        collect_rosters = helpers.get_chat_collect_rosters(chat_id)
+                        new_text = helpers.format_team_registration_text(
+                            reg.get("tourn_name", ""),
+                            url,
+                            reg.get("representative_text", ""),
+                            reg.get("narrator_text", ""),
+                            reg.get("start_time", ""),
+                            teams,
+                            include_roster_prompt=collect_rosters,
+                            sync_req_id=reg.get("sync_req_id"),
+                            chat_id=chat_id,
+                        )
+                        telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
+                        telegram_api.set_message_reaction(chat_id, msg_id, "❤️")
+                    return ""
+                elif not raw_text.startswith("/"):
+                    team_name = raw_text
+                    updated_entity = datastore.register_team_in_ds(chat_id, reg["sync_req_id"], team_name, user_id, user_disp, message_id=msg_id)
+                    if updated_entity:
+                        teams = updated_entity.get("teams", [])
+                        url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                        collect_rosters = helpers.get_chat_collect_rosters(chat_id)
+                        new_text = helpers.format_team_registration_text(
+                            reg.get("tourn_name", ""),
+                            url,
+                            reg.get("representative_text", ""),
+                            reg.get("narrator_text", ""),
+                            reg.get("start_time", ""),
+                            teams,
+                            include_roster_prompt=collect_rosters,
+                            sync_req_id=reg.get("sync_req_id"),
+                            chat_id=chat_id,
+                        )
+                        telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
+                        telegram_api.set_message_reaction(chat_id, msg_id, "❤️")
+
+                        if not is_edit and collect_rosters and user_id and not datastore.has_user_started_bot(user_id):
+                            if datastore.get_user_registration_reminders_count(user_id) < 3:
+                                bot_username = helpers.get_bot_username()
+                                link_url = f"https://t.me/{bot_username}?start=roster_{reg.get('sync_req_id')}_{chat_id}"
+                                prompt_text = helpers.get_random_roster_prompt(link_url)
+                                thread_id = msg_thread_id or reg.get("thread_id")
+                                telegram_api.send_message(
+                                    chat_id,
+                                    thread_id,
+                                    prompt_text,
+                                    formatted=True,
+                                    reply_to_message_id=msg_id,
+                                )
+                                datastore.increment_user_registration_reminders_count(user_id, username=username)
                     return ""
 
+            if is_edit:
+                # Edits to non-registration messages are ignored to avoid re-triggering commands
+                return ""
+
             cmd = inp[0].split("@")[0].lower()
+
+            if cmd.startswith("/unregister") or cmd in ("/отмена", "/cancel_reg"):
+                sync_id = None
+                if "_" in cmd:
+                    parts = cmd.split("_", 1)
+                    if parts[1].strip():
+                        sync_id = parts[1].strip()
+                elif len(inp) > 1 and inp[1].strip():
+                    sync_id = inp[1].strip()
+
+                reply_msg_id = msg.get("reply_to_message", {}).get("message_id") if "reply_to_message" in msg else None
+                reg = None
+                team_info = None
+                if reply_msg_id:
+                    reg = datastore.get_team_registration_by_msg(chat_id, reply_msg_id) or datastore.get_team_registration_by_team_msg(chat_id, reply_msg_id)
+
+                if not reg:
+                    reg, team_info = datastore.find_user_team_registration(chat_id, user_id, sync_req_id=sync_id)
+                else:
+                    for t in reg.get("teams", []):
+                        if t.get("user_id") == user_id:
+                            team_info = t
+                            break
+
+                if reg:
+                    tname = team_info.get("display_name") or team_info.get("team_name", "Команда") if team_info else ""
+                    updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
+                    if updated_entity is not None:
+                        url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                        collect_rosters = helpers.get_chat_collect_rosters(chat_id)
+                        new_text = helpers.format_team_registration_text(
+                            reg.get("tourn_name", ""),
+                            url,
+                            reg.get("representative_text", ""),
+                            reg.get("narrator_text", ""),
+                            reg.get("start_time", ""),
+                            updated_entity.get("teams", []),
+                            include_roster_prompt=collect_rosters,
+                            sync_req_id=reg.get("sync_req_id"),
+                            chat_id=chat_id,
+                        )
+                        telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
+                        telegram_api.set_message_reaction(chat_id, msg_id, "❤️")
+                        name_str = f" <b>«{html.escape(tname)}»</b>" if tname else ""
+                        telegram_api.send_message(
+                            chat_id,
+                            msg_thread_id,
+                            f"❌ Регистрация команды{name_str} отменена.",
+                            formatted=True,
+                            reply_to_message_id=msg_id,
+                        )
+                    return ""
+                else:
+                    telegram_api.send_message(
+                        chat_id,
+                        msg_thread_id,
+                        "У вас нет активной зарегистрированной команды в этом чате.",
+                        formatted=True,
+                        reply_to_message_id=msg_id,
+                    )
+                    return ""
 
             if cmd in ("/tourns", "/rtourns"):
                 if len(inp) <= 1 or not " ".join(inp[1:]).strip():
@@ -1029,11 +1133,13 @@ def command_handler(body):
                         "auto": "🔄 Автоматически (реальная роль)",
                     }
                     label = role_labels.get(target_role, target_role)
+                    markup = helpers.get_roster_inline_markup(text="📋 Открыть составы") if chat_id > 0 else None
                     telegram_api.send_message(
                         chat_id,
                         thread_id,
-                        f"🎭 <b>Режим тестирования роли изменен:</b>\n{label}\n\n<i>Откройте или обновите раздел «Составы» для проверки.</i>",
+                        f"🎭 <b>Режим тестирования роли изменен:</b>\n{label}\n\n<i>Откройте или обновите раздел «📋 Составы» для проверки.</i>",
                         formatted=True,
+                        reply_markup=markup,
                     )
                 else:
                     cur = datastore.get_user_test_role(user_id) or "auto"

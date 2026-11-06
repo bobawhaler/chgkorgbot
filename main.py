@@ -199,7 +199,7 @@ def api_miniapp_init():
                                 "team_name": "Тестовая Команда",
                                 "display_name": "Тестовая Команда",
                                 "user_id": user_id,
-                                "rating_team_id": 90914,
+                                "rating_team_id": None,
                                 "town": "Берлин",
                                 "roster": [],
                                 "roster_submitted": False
@@ -504,9 +504,13 @@ def api_miniapp_reject_roster():
             pm_msg = (
                 f"⚠️ <b>Запрос исправления состава от представителя площадки!</b>\n\n"
                 f"Представитель площадки вернул состав команды <b>\"{tname_str}\"</b> на турнир <b>\"{tourn_name}\"</b> на доработку.{comment_block}\n\n"
-                f"Пожалуйста, проверьте и скорректируйте состав по кнопке <b>«Составы»</b> или отправьте /roster в этот личный чат с ботом."
+                f"Пожалуйста, проверьте и скорректируйте состав по кнопке ниже."
             )
-            telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
+            markup = helpers.get_roster_inline_markup(
+                webapp_url=helpers.get_webapp_url(start_param=f"roster_{sync_req_id}_{chat_id}"),
+                text="📋 Исправить состав"
+            )
+            telegram_api.send_message(target_uid, None, pm_msg, formatted=True, reply_markup=markup)
 
         return jsonify({"ok": True, "team_name": tname_str, "tourn_name": tourn_name, "comment": comment})
     except Exception as exc:
@@ -601,9 +605,13 @@ def api_miniapp_remind_roster():
         pm_msg = (
             f"⏰ <b>Напоминание от представителя площадки!</b>\n\n"
             f"Представитель площадки запрашивает состав команды <b>\"{team_name}\"</b> на турнир <b>\"{tourn_name}\"</b>.\n\n"
-            f"Пожалуйста, откройте кнопку <b>«Составы»</b> или отправьте /roster в этот личный чат с ботом для сдачи состава."
+            f"Пожалуйста, сдайте состав команды по кнопке ниже."
         )
-        res = telegram_api.send_message(target_uid, None, pm_msg, formatted=True)
+        markup = helpers.get_roster_inline_markup(
+            webapp_url=helpers.get_webapp_url(start_param=f"roster_{sync_req_id}_{chat_id}"),
+            text="📋 Сдать состав"
+        )
+        res = telegram_api.send_message(target_uid, None, pm_msg, formatted=True, reply_markup=markup)
         if res and res.ok:
             datastore.mark_user_bot_started(target_uid)
             datastore.increment_team_reminder_in_ds(chat_id, sync_req_id, target_user_id=target_uid, team_index=t_index)
