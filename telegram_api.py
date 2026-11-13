@@ -1,9 +1,14 @@
 import requests
 import time
-from telegram import ParseMode
 import random
 import helpers
 import debug
+
+
+class ParseMode:
+    HTML = "HTML"
+    MARKDOWN = "Markdown"
+    MARKDOWN_V2 = "MarkdownV2"
 
 
 BASE_URL = f"https://api.telegram.org/bot{helpers.TELEGRAM_API_TOKEN or ''}/"

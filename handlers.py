@@ -93,6 +93,128 @@ def build_help_text(chat_id, is_private=True):
 
 
 
+def check_and_update_active_sync_requests(monitored_venues):
+    if not monitored_venues:
+        return
+
+    for venue_id, chat_ids in monitored_venues.items():
+        try:
+            upcoming_reqs = rating_api.get_upcoming_sync_requests(venue_id)
+        except Exception as e:
+            print(f"Error fetching upcoming sync requests for venue {venue_id}: {e}")
+            continue
+
+        if not upcoming_reqs:
+            continue
+
+        remote_by_id = {str(r["id"]): r for r in upcoming_reqs}
+
+        for chat_id in chat_ids:
+            try:
+                active_regs = datastore.get_all_active_registrations(chat_id=chat_id)
+            except Exception as e:
+                print(f"Error fetching active registrations for chat {chat_id}: {e}")
+                continue
+
+            if not active_regs:
+                continue
+
+            chat_config = datastore.get_chat_config(chat_id) or {}
+            tz_name = helpers.resolve_timezone(chat_config.get("timezone"))
+
+            for reg in active_regs:
+                s_id = str(reg.get("sync_req_id"))
+                if s_id not in remote_by_id:
+                    continue
+
+                remote_req = remote_by_id[s_id]
+                remote_dt = remote_req.get("dateStart")
+                if not remote_dt:
+                    continue
+
+                remote_ts = int(remote_dt.timestamp())
+                remote_start_time_str = (
+                    remote_dt.astimezone(pytz.timezone(tz_name)).strftime("%d.%m %H:%M")
+                )
+
+                old_ts = helpers.get_registration_start_ts(reg)
+                old_start_str = reg.get("start_time", "")
+                time_changed = (
+                    (old_ts is not None and old_ts != remote_ts)
+                    or (old_start_str and old_start_str != remote_start_time_str)
+                )
+
+                rep_form, rep_is_fem = helpers.get_person_form(remote_req.get("representative"))
+                new_rep_text = ("Представительница: " if rep_is_fem else "Представитель: ") + rep_form
+                rep_changed = new_rep_text != reg.get("representative_text", "")
+
+                narr_form, narr_is_fem = helpers.get_person_form(remote_req.get("narrator"))
+                new_narr_text = ("Ведущая: " if narr_is_fem else "Ведущий: ") + narr_form
+                narr_changed = new_narr_text != reg.get("narrator_text", "")
+
+                remote_status = remote_req.get("status")
+                is_canceled = remote_status in ("C", "D")
+                status_changed = is_canceled and reg.get("status") == "active"
+
+                if not (time_changed or rep_changed or narr_changed or status_changed):
+                    continue
+
+                tourn_id = reg.get("tourn_id") or remote_req.get("tourn_id") or s_id
+                url = f'https://rating.chgk.info/tournament/{tourn_id}'
+                tourn_name = reg.get("tourn_name", "")
+                msg_id = reg.get("message_id")
+                is_reg_teams = reg.get("register_teams", True)
+
+                if is_reg_teams:
+                    collect_rosters = helpers.get_chat_collect_rosters(chat_id)
+                    new_text = helpers.format_team_registration_text(
+                        tourn_name,
+                        url,
+                        new_rep_text,
+                        new_narr_text,
+                        remote_start_time_str,
+                        reg.get("teams", []),
+                        include_roster_prompt=collect_rosters,
+                        sync_req_id=s_id,
+                        chat_id=chat_id,
+                        is_canceled=is_canceled,
+                    )
+                else:
+                    new_text = f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {new_rep_text}. {new_narr_text}. Начало: {remote_start_time_str}'
+                    if is_canceled:
+                        new_text += "\n\n❌ <b>Заявка отменена на сайте рейтинга.</b>"
+
+                reg["start_time"] = remote_start_time_str
+                reg["start_time_ts"] = remote_ts
+                reg["representative_text"] = new_rep_text
+                reg["narrator_text"] = new_narr_text
+                if remote_req.get("tourn_id"):
+                    reg["tourn_id"] = remote_req.get("tourn_id")
+                if is_canceled:
+                    reg["status"] = "canceled"
+
+                try:
+                    datastore.update_team_registration(reg)
+                except Exception as e:
+                    print(f"Error updating registration entity {chat_id}_{s_id}: {e}")
+
+                if msg_id:
+                    try:
+                        edit_resp = telegram_api.edit_message_text(int(chat_id), msg_id, new_text)
+                        if status_changed and is_canceled:
+                            thread_id = reg.get("thread_id") or chat_config.get("thread_id")
+                            reply_to_id = msg_id if (edit_resp and edit_resp.ok) else None
+                            telegram_api.send_message(
+                                int(chat_id),
+                                thread_id,
+                                f'❌ <b>Заявка на турнир «{tourn_name}» отменена на сайте рейтинга.</b>',
+                                formatted=True,
+                                reply_to_message_id=reply_to_id,
+                            )
+                    except Exception as e:
+                        print(f"Error editing message {msg_id} in chat {chat_id}: {e}")
+
+
 def system_tic_handler():
     t0 = time.perf_counter()
     # telegram_api.set_webhook()
@@ -198,13 +320,46 @@ def system_tic_handler():
                                 start_time,
                                 start_time_ts=start_time_ts,
                                 created_by_user_id=rep_user_id,
+                                tourn_id=sync_req["tourn_id"],
+                                register_teams=True,
                             )
                 else:
-                    telegram_api.send_formatted_message(
+                    msg_text = f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}'
+                    resp = telegram_api.send_message(
                         int(chat_id),
                         thread_id,
-                        f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
+                        msg_text,
+                        formatted=True,
                     )
+                    if resp and resp.ok:
+                        res_data = resp.json().get("result", {})
+                        message_id = res_data.get("message_id")
+                        if message_id:
+                            rep_user_id = None
+                            if representative_text:
+                                rep_id_match = re.search(r'\b(\d{4,7})\b', representative_text)
+                                if rep_id_match:
+                                    rep_mapping = datastore.find_user_by_rating_id(int(rep_id_match.group(1)))
+                                    if rep_mapping:
+                                        rep_user_id = rep_mapping.get("telegram_user_id")
+
+                            datastore.add_team_registration(
+                                int(chat_id),
+                                thread_id,
+                                sync_req["id"],
+                                message_id,
+                                tourn_name,
+                                representative_text,
+                                narrator_text,
+                                start_time,
+                                start_time_ts=start_time_ts,
+                                created_by_user_id=rep_user_id,
+                                tourn_id=sync_req["tourn_id"],
+                                register_teams=False,
+                            )
+
+    # Check for updates in existing active sync requests (e.g. edited start time, narrator, cancellation)
+    check_and_update_active_sync_requests(monitored_venues)
 
     # Clean up and delete old registrations past their deadline (older than 14 days)
     datastore.cleanup_old_registrations(days=14)
@@ -442,7 +597,7 @@ def handle_private_message(body):
                 updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
                 if updated_entity:
                     teams = updated_entity.get("teams", [])
-                    url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                    url = f'https://rating.chgk.info/tournament/{reg.get("tourn_id") or reg.get("sync_req_id")}'
                     collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                     new_text = helpers.format_team_registration_text(
                         reg.get("tourn_name", ""),
@@ -459,7 +614,7 @@ def handle_private_message(body):
                 updated_entity = datastore.register_team_in_ds(chat_id, reg["sync_req_id"], team_name, user_id, user_disp)
                 if updated_entity:
                     teams = updated_entity.get("teams", [])
-                    url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                    url = f'https://rating.chgk.info/tournament/{reg.get("tourn_id") or reg.get("sync_req_id")}'
                     collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                     new_text = helpers.format_team_registration_text(
                         reg.get("tourn_name", ""),
@@ -787,7 +942,7 @@ def command_handler(body):
                     updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
                     if updated_entity is not None:
                         teams = updated_entity.get("teams", [])
-                        url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                        url = f'https://rating.chgk.info/tournament/{reg.get("tourn_id") or reg.get("sync_req_id")}'
                         collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                         new_text = helpers.format_team_registration_text(
                             reg.get("tourn_name", ""),
@@ -808,7 +963,7 @@ def command_handler(body):
                     updated_entity = datastore.register_team_in_ds(chat_id, reg["sync_req_id"], team_name, user_id, user_disp, message_id=msg_id)
                     if updated_entity:
                         teams = updated_entity.get("teams", [])
-                        url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                        url = f'https://rating.chgk.info/tournament/{reg.get("tourn_id") or reg.get("sync_req_id")}'
                         collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                         new_text = helpers.format_team_registration_text(
                             reg.get("tourn_name", ""),
@@ -873,7 +1028,7 @@ def command_handler(body):
                     tname = team_info.get("display_name") or team_info.get("team_name", "Команда") if team_info else ""
                     updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
                     if updated_entity is not None:
-                        url = f'https://rating.chgk.info/tournament/{reg.get("sync_req_id")}'
+                        url = f'https://rating.chgk.info/tournament/{reg.get("tourn_id") or reg.get("sync_req_id")}'
                         collect_rosters = helpers.get_chat_collect_rosters(chat_id)
                         new_text = helpers.format_team_registration_text(
                             reg.get("tourn_name", ""),

@@ -640,25 +640,33 @@ def get_default_poll_closing_time():
     return datetime.datetime.now() + relativedelta(months=1)
 
 
-def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams, include_roster_prompt=True, sync_req_id=None, chat_id=None):
+def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams, include_roster_prompt=True, sync_req_id=None, chat_id=None, is_canceled=False):
     lines = [
         f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
         "",
-        "📝 <b>Регистрация команд открыта!</b>",
-        "<i>Ответьте (reply) на это сообщение названием вашей команды для регистрации.</i>",
-        "<i>Для отмены нажмите /unregister</i>",
     ]
-    if include_roster_prompt:
-        m = re.search(r'/tournament/(\d+)', str(url or ""))
-        s_id = sync_req_id or (m.group(1) if m else None)
-        if s_id and chat_id:
-            start_param = f"roster_{s_id}_{chat_id}"
-        elif s_id:
-            start_param = f"roster_{s_id}"
-        else:
-            start_param = "roster"
-        direct_url = get_webapp_direct_url(start_param=start_param)
-        lines.append(f'<i>Для сдачи состава откройте приложение <a href="{direct_url}">«📋 Составы»</a>.</i>')
+    if is_canceled:
+        lines.extend([
+            "❌ <b>Заявка отменена на сайте рейтинга.</b>",
+            "<i>Регистрация закрыта.</i>",
+        ])
+    else:
+        lines.extend([
+            "📝 <b>Регистрация команд открыта!</b>",
+            "<i>Ответьте (reply) на это сообщение названием вашей команды для регистрации.</i>",
+            "<i>Для отмены нажмите /unregister</i>",
+        ])
+        if include_roster_prompt:
+            m = re.search(r'/tournament/(\d+)', str(url or ""))
+            s_id = sync_req_id or (m.group(1) if m else None)
+            if s_id and chat_id:
+                start_param = f"roster_{s_id}_{chat_id}"
+            elif s_id:
+                start_param = f"roster_{s_id}"
+            else:
+                start_param = "roster"
+            direct_url = get_webapp_direct_url(start_param=start_param)
+            lines.append(f'<i>Для сдачи состава откройте приложение <a href="{direct_url}">«📋 Составы»</a>.</i>')
     lines.extend([
         "",
         f"<b>Зарегистрированные команды ({len(teams)}):</b>",

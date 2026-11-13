@@ -177,6 +177,93 @@ def get_new_sync_requests(venue_id):
     return result
 
 
+def get_upcoming_sync_requests(venue_id):
+    t0 = time.perf_counter()
+    now = datetime.datetime.now(pytz.utc)
+    from_date = (now - relativedelta(days=2)).strftime("%Y-%m-%d")
+    result = []
+    if not venue_id:
+        return result
+
+    params = {"dateStart[after]": from_date}
+    sync_requests = _fetch_paginated(
+        f"{API_URL}/venues/{venue_id}/requests",
+        params,
+        _VENUES_REQUESTS_ITEMS_PER_PAGE,
+    )
+
+    if sync_requests is None:
+        return result
+
+    for sync_req in sync_requests:
+        narrator = ""
+        if "narrator" in sync_req:
+            narrator = sync_req["narrator"]
+        elif "narrators" in sync_req:
+            narrator = sync_req["narrators"][0]
+        else:
+            narrator = ""
+
+        try:
+            date_start = datetime.datetime.fromisoformat(
+                sync_req["dateStart"].replace("Z", "+00:00")
+            )
+        except Exception:
+            date_start = datetime.datetime.now(pytz.utc)
+
+        result.append(
+            {
+                "id": str(sync_req["id"]),
+                "tourn_id": sync_req.get("tournamentId"),
+                "status": sync_req.get("status"),
+                "representative": sync_req.get("representative"),
+                "narrator": narrator,
+                "dateStart": date_start,
+            }
+        )
+
+    debug.log("rating_api.get_upcoming_sync_requests", t0, f"venue={venue_id} -> {len(result)}")
+    return result
+
+
+def get_sync_request_details(sync_req_id):
+    t0 = time.perf_counter()
+    if not sync_req_id:
+        return None
+    url = f"{API_URL}/tournament_synch_requests/{sync_req_id}"
+    try:
+        response = requests.get(url, headers={"Accept": "application/json"}, timeout=5)
+        if not response.ok:
+            return None
+        sync_req = response.json()
+    except Exception as e:
+        print(f"Error fetching sync request details for {sync_req_id}: {e}")
+        return None
+
+    narrator = ""
+    if "narrator" in sync_req:
+        narrator = sync_req["narrator"]
+    elif "narrators" in sync_req:
+        narrator = sync_req["narrators"][0]
+
+    try:
+        date_start = datetime.datetime.fromisoformat(
+            sync_req["dateStart"].replace("Z", "+00:00")
+        )
+    except Exception:
+        date_start = datetime.datetime.now(pytz.utc)
+
+    debug.log("rating_api.get_sync_request_details", t0, f"sync_req_id={sync_req_id}")
+    return {
+        "id": str(sync_req.get("id", sync_req_id)),
+        "tourn_id": sync_req.get("tournamentId"),
+        "status": sync_req.get("status"),
+        "representative": sync_req.get("representative"),
+        "narrator": narrator,
+        "dateStart": date_start,
+    }
+
+
 def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=False):
     t0 = time.perf_counter()
     from_date = (tourn_date - relativedelta(months=1)).strftime("%Y-%m-%d")

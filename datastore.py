@@ -581,7 +581,7 @@ def cache_team_players(team_id, players):
 
 # --- Team Registration & Roster Functions ---
 
-def add_team_registration(chat_id, thread_id, sync_req_id, message_id, tourn_name, representative_text="", narrator_text="", start_time="", start_time_ts=None, created_by_user_id=None):
+def add_team_registration(chat_id, thread_id, sync_req_id, message_id, tourn_name, representative_text="", narrator_text="", start_time="", start_time_ts=None, created_by_user_id=None, tourn_id=None, register_teams=True):
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
     entity = datastore.Entity(key=key, exclude_from_indexes=("teams",))
@@ -596,6 +596,8 @@ def add_team_registration(chat_id, thread_id, sync_req_id, message_id, tourn_nam
         "start_time": start_time,
         "start_time_ts": start_time_ts,
         "created_by_user_id": created_by_user_id,
+        "tourn_id": tourn_id,
+        "register_teams": register_teams,
         "teams": [],
         "status": "active",
         "created_at": datetime.datetime.now(pytz.utc),
