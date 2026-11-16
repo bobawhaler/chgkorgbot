@@ -1531,13 +1531,39 @@ def is_valid_team_name(name):
     return True
 
 
+def is_empty_team(team):
+    """
+    Returns True if the team has not submitted a roster, has no players in roster,
+    and was not submitted externally.
+    """
+    if not team or not isinstance(team, dict):
+        return False
+    if team.get("roster_submitted") or team.get("submitted_externally"):
+        return False
+    roster = team.get("roster")
+    if roster and len(roster) > 0:
+        return False
+    return True
+
+
+def can_unregister_team(reg, team):
+    """
+    Returns True if the team can be unregistered:
+    - Allowed if registration is open.
+    - If registration is closed, allowed only if the team is empty (no players and not submitted).
+    """
+    if is_registration_open(reg):
+        return True
+    return bool(team and is_empty_team(team))
+
+
 def is_registration_open(reg):
     """
     Returns True if team registration/editing is currently open for the tournament.
     Registration is considered closed if:
     - Tournament status is canceled, archived, or closed.
     - More than 3 hours have passed since the tournament start time (game has finished).
-    - If start_time_ts is missing, more than 48 hours have passed since creation.
+    - If start_time_ts is missing, more than 24 hours have passed since creation.
     """
     if not reg or not isinstance(reg, dict):
         return False
@@ -1552,7 +1578,7 @@ def is_registration_open(reg):
     else:
         created_at = reg.get("created_at")
         created_ts = int(created_at.timestamp()) if (created_at and hasattr(created_at, "timestamp")) else 0
-        if created_ts and (now_ts - created_ts > 86400 * 2):
+        if created_ts and (now_ts - created_ts > 86400):
             return False
     return True
 

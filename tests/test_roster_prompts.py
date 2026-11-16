@@ -425,6 +425,116 @@ class TestRosterPrompts(unittest.TestCase):
         self.assertIn("Победа", call_args[2])
         self.assertIn("отменена", call_args[2])
 
+    @patch("telegram_api.edit_message_text")
+    @patch("telegram_api.set_message_reaction")
+    @patch("telegram_api.send_message")
+    @patch("datastore.find_user_team_registration")
+    @patch("datastore.unregister_team_in_ds")
+    @patch("helpers.get_chat_collect_rosters")
+    def test_unregister_command_closed_registration_empty_team_success(
+        self,
+        mock_collect_rosters,
+        mock_unregister_team,
+        mock_find_user_reg,
+        mock_send_msg,
+        mock_reaction,
+        mock_edit_msg,
+    ):
+        import time
+        import handlers
+
+        mock_collect_rosters.return_value = True
+        now_ts = int(time.time())
+        # Tournament started 5 hours ago -> registration is closed
+        reg = {
+            "chat_id": -1001,
+            "sync_req_id": "12345",
+            "message_id": 999,
+            "tourn_name": "Весенний кубок",
+            "thread_id": 10,
+            "start_time_ts": now_ts - (5 * 3600),
+            "status": "active",
+        }
+        # Empty team: no roster, not submitted
+        team_info = {
+            "team_name": "Ошибочная команда",
+            "display_name": "Ошибочная команда",
+            "user_id": 777,
+            "roster": [],
+            "roster_submitted": False,
+        }
+        reg["teams"] = [team_info]
+        mock_find_user_reg.return_value = (reg, team_info)
+        mock_unregister_team.return_value = {"teams": []}
+
+        body = {
+            "message": {
+                "message_id": 666,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 777, "username": "captain", "first_name": "Cap"},
+                "text": "/unregister",
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_find_user_reg.assert_called_once_with(-1001, 777, sync_req_id=None)
+        mock_unregister_team.assert_called_once_with(-1001, "12345", 777)
+        mock_send_msg.assert_called_once()
+        call_args = mock_send_msg.call_args[0]
+        self.assertIn("Регистрация команды", call_args[2])
+        self.assertIn("отменена", call_args[2])
+
+    @patch("telegram_api.send_message")
+    @patch("datastore.find_user_team_registration")
+    @patch("datastore.unregister_team_in_ds")
+    def test_unregister_command_closed_registration_non_empty_team_rejected(
+        self,
+        mock_unregister_team,
+        mock_find_user_reg,
+        mock_send_msg,
+    ):
+        import time
+        import handlers
+
+        now_ts = int(time.time())
+        # Tournament started 5 hours ago -> registration is closed
+        reg = {
+            "chat_id": -1001,
+            "sync_req_id": "12345",
+            "message_id": 999,
+            "tourn_name": "Весенний кубок",
+            "start_time_ts": now_ts - (5 * 3600),
+            "status": "active",
+        }
+        # Non-empty team: roster submitted or players entered
+        team_info = {
+            "team_name": "Реальная команда",
+            "display_name": "Реальная команда",
+            "user_id": 777,
+            "roster": [{"id": 111, "name": "Игрок"}],
+            "roster_submitted": True,
+        }
+        reg["teams"] = [team_info]
+        mock_find_user_reg.return_value = (reg, team_info)
+
+        body = {
+            "message": {
+                "message_id": 666,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 777, "username": "captain", "first_name": "Cap"},
+                "text": "/unregister",
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_find_user_reg.assert_called_once_with(-1001, 777, sync_req_id=None)
+        mock_unregister_team.assert_not_called()
+        mock_send_msg.assert_called_once()
+        call_args = mock_send_msg.call_args[0]
+        self.assertIn("Регистрация на данный турнир уже закрыта", call_args[2])
+
     @patch("telegram_api.send_message")
     @patch("datastore.find_user_team_registration")
     def test_unregister_command_no_registration(
@@ -517,6 +627,89 @@ class TestRosterPrompts(unittest.TestCase):
         self.assertIn("startapp=roster_98765_-1001234567", web_app_url)
         mock_update_reg.assert_called_once_with(reg)
         self.assertEqual(reg["teams"][0]["reminders_count"], 1)
+
+    @patch("datastore.cleanup_old_chat_commands")
+    @patch("datastore.cleanup_old_cached_tournaments")
+    @patch("datastore.update_team_registration")
+    @patch("telegram_api.send_message")
+    @patch("helpers.get_registration_start_ts")
+    @patch("helpers.get_chat_collect_rosters")
+    @patch("datastore.get_all_active_registrations")
+    @patch("datastore.cleanup_old_registrations")
+    @patch("datastore.get_monitored_venues")
+    @patch("datastore.traverse_finished_tasks")
+    def test_system_tic_handler_roster_reminder_past_24_hours(
+        self,
+        mock_traverse_tasks,
+        mock_monitored_venues,
+        mock_cleanup_regs,
+        mock_get_active_regs,
+        mock_collect_rosters,
+        mock_start_ts,
+        mock_send_msg,
+        mock_update_reg,
+        mock_cleanup_cached,
+        mock_cleanup_cmds,
+    ):
+        import time
+        import handlers
+
+        mock_traverse_tasks.return_value = []
+        mock_monitored_venues.return_value = {}
+        mock_collect_rosters.return_value = True
+
+        now_ts = int(time.time())
+        # Started 25 hours ago (> 24 hours) -> should NOT send automated reminders
+        mock_start_ts.return_value = now_ts - (25 * 3600)
+
+        reg = {
+            "chat_id": -1001234567,
+            "sync_req_id": "98765",
+            "tourn_name": "Тестовый кубок",
+            "teams": [
+                {
+                    "user_id": 555,
+                    "team_name": "Знатоки",
+                    "roster_submitted": False,
+                    "roster": [],
+                    "reminders_count": 0,
+                }
+            ],
+        }
+        mock_get_active_regs.return_value = [reg]
+
+        handlers.system_tic_handler()
+
+        mock_send_msg.assert_not_called()
+        mock_update_reg.assert_not_called()
+
+    def test_is_empty_team_and_can_unregister(self):
+        import time
+        now_ts = int(time.time())
+
+        empty_team = {"team_name": "Пустая", "roster": [], "roster_submitted": False}
+        submitted_team = {"team_name": "Сданная", "roster": [], "roster_submitted": True}
+        team_with_players = {"team_name": "С игроками", "roster": [{"id": 1, "name": "Игрок"}], "roster_submitted": False}
+        external_team = {"team_name": "Внешняя", "roster": [], "roster_submitted": False, "submitted_externally": True}
+
+        self.assertTrue(helpers.is_empty_team(empty_team))
+        self.assertFalse(helpers.is_empty_team(submitted_team))
+        self.assertFalse(helpers.is_empty_team(team_with_players))
+        self.assertFalse(helpers.is_empty_team(external_team))
+
+        reg_open = {"status": "active", "start_time_ts": now_ts + 3600}
+        reg_closed = {"status": "active", "start_time_ts": now_ts - (5 * 3600)}
+
+        # If registration is open, any team can unregister
+        self.assertTrue(helpers.can_unregister_team(reg_open, empty_team))
+        self.assertTrue(helpers.can_unregister_team(reg_open, submitted_team))
+
+        # If registration is closed, only empty teams can unregister
+        self.assertTrue(helpers.can_unregister_team(reg_closed, empty_team))
+        self.assertFalse(helpers.can_unregister_team(reg_closed, submitted_team))
+        self.assertFalse(helpers.can_unregister_team(reg_closed, team_with_players))
+        self.assertFalse(helpers.can_unregister_team(reg_closed, external_team))
+        self.assertFalse(helpers.can_unregister_team(reg_closed, None))
 
     def test_is_valid_team_name(self):
         self.assertTrue(helpers.is_valid_team_name("Победа"))

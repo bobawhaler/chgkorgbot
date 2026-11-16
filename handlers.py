@@ -376,14 +376,14 @@ def system_tic_handler():
             if now_ts < start_ts:
                 # Tournament has not started yet! Do not send any reminders before start_ts.
                 continue
-            if now_ts - start_ts > 86400 * 2:
-                # Tournament already passed (started more than 48 hours ago). Do not send automated reminders.
+            if now_ts - start_ts > 86400:
+                # Tournament already passed (started more than 24 hours ago). Do not send automated reminders.
                 continue
         else:
             created_at = reg.get("created_at")
             created_ts = int(created_at.timestamp()) if (created_at and hasattr(created_at, "timestamp")) else 0
-            if created_ts and (now_ts - created_ts > 86400 * 2):
-                # Registration is older than 48 hours. Do not send automated reminders.
+            if created_ts and (now_ts - created_ts > 86400):
+                # Registration is older than 24 hours. Do not send automated reminders.
                 continue
 
         teams = reg.get("teams", [])
@@ -594,6 +594,13 @@ def handle_private_message(body):
             raw_text = text.strip()
 
             if raw_text.lower() in ("/unregister", "отмена") or raw_text.lower().startswith("/unregister") or raw_text.lower().startswith("отмена"):
+                user_team = None
+                for t in reg.get("teams", []):
+                    if t.get("user_id") == user_id:
+                        user_team = t
+                        break
+                if not helpers.can_unregister_team(reg, user_team):
+                    return True
                 updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
                 if updated_entity:
                     teams = updated_entity.get("teams", [])
@@ -948,7 +955,12 @@ def command_handler(body):
                 raw_text = msg_text
                 
                 if raw_text.lower() in ("/unregister", "отмена") or raw_text.lower().startswith(("/unregister", "отмена")):
-                    if not helpers.is_registration_open(reg):
+                    user_team = None
+                    for t in reg.get("teams", []):
+                        if t.get("user_id") == user_id:
+                            user_team = t
+                            break
+                    if not helpers.can_unregister_team(reg, user_team):
                         return ""
                     updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
                     if updated_entity is not None:
@@ -1040,7 +1052,13 @@ def command_handler(body):
                             break
 
                 if reg:
-                    if not helpers.is_registration_open(reg):
+                    user_team = team_info
+                    if not user_team:
+                        for t in reg.get("teams", []):
+                            if t.get("user_id") == user_id:
+                                user_team = t
+                                break
+                    if not helpers.can_unregister_team(reg, user_team):
                         telegram_api.send_message(
                             chat_id,
                             msg_thread_id,
