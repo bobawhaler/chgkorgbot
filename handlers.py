@@ -416,7 +416,7 @@ def system_tic_handler():
                         f"Пожалуйста, сдайте состав вашей команды <b>\"{team_name}\"</b>."
                     )
                     markup = helpers.get_roster_inline_markup(
-                        webapp_url=helpers.get_webapp_url(start_param=f"roster_{reg.get('sync_req_id')}_{chat_id}"),
+                        webapp_url=helpers.get_webapp_url(start_param=f"roster_{reg.get('sync_req_id')}_{reg_chat_id}"),
                         text="📋 Сдать состав"
                     )
                     pm_res = telegram_api.send_message(user_id, None, msg_text, formatted=True, reply_markup=markup)
@@ -610,7 +610,9 @@ def handle_private_message(body):
                     )
                     telegram_api.edit_message_text(chat_id, reg["message_id"], new_text)
             elif not raw_text.startswith("/"):
-                team_name = raw_text
+                if not helpers.is_registration_open(reg) or not helpers.is_valid_team_name(raw_text):
+                    return True
+                team_name = raw_text.strip()
                 updated_entity = datastore.register_team_in_ds(chat_id, reg["sync_req_id"], team_name, user_id, user_disp)
                 if updated_entity:
                     teams = updated_entity.get("teams", [])
@@ -925,20 +927,29 @@ def command_handler(body):
 
             # Check if this message is a reply to a team registration announcement or an edit of a registration
             reg = None
-            if "reply_to_message" in msg:
+            if "reply_to_message" in msg and not is_edit:
                 reply_msg_id = msg["reply_to_message"].get("message_id")
-                reg = datastore.get_team_registration_by_msg(chat_id, reply_msg_id) or datastore.get_team_registration_by_team_msg(chat_id, reply_msg_id)
+                reg = datastore.get_team_registration_by_msg(chat_id, reply_msg_id)
 
             if not reg and is_edit:
-                reg = datastore.get_team_registration_by_team_msg(chat_id, msg_id)
-                if not reg:
-                    reg, _ = datastore.find_user_team_registration(chat_id, user_id)
+                candidate_reg = datastore.get_team_registration_by_team_msg(chat_id, msg_id)
+                if candidate_reg:
+                    teams_list = candidate_reg.get("teams", [])
+                    if teams_list:
+                        for t in teams_list:
+                            if t.get("message_id") == msg_id and t.get("user_id") == user_id:
+                                reg = candidate_reg
+                                break
+                    else:
+                        reg = candidate_reg
 
             if reg:
                 user_disp = username or f"{first_name} {last_name}".strip()
                 raw_text = msg_text
                 
                 if raw_text.lower() in ("/unregister", "отмена") or raw_text.lower().startswith(("/unregister", "отмена")):
+                    if not helpers.is_registration_open(reg):
+                        return ""
                     updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
                     if updated_entity is not None:
                         teams = updated_entity.get("teams", [])
@@ -959,7 +970,11 @@ def command_handler(body):
                         telegram_api.set_message_reaction(chat_id, msg_id, "❤️")
                     return ""
                 elif not raw_text.startswith("/"):
-                    team_name = raw_text
+                    if not helpers.is_registration_open(reg):
+                        return ""
+                    if not helpers.is_valid_team_name(raw_text):
+                        return ""
+                    team_name = raw_text.strip()
                     updated_entity = datastore.register_team_in_ds(chat_id, reg["sync_req_id"], team_name, user_id, user_disp, message_id=msg_id)
                     if updated_entity:
                         teams = updated_entity.get("teams", [])
@@ -1025,6 +1040,15 @@ def command_handler(body):
                             break
 
                 if reg:
+                    if not helpers.is_registration_open(reg):
+                        telegram_api.send_message(
+                            chat_id,
+                            msg_thread_id,
+                            "Регистрация на данный турнир уже закрыта, отмена заявки невозможна.",
+                            formatted=True,
+                            reply_to_message_id=msg_id,
+                        )
+                        return ""
                     tname = team_info.get("display_name") or team_info.get("team_name", "Команда") if team_info else ""
                     updated_entity = datastore.unregister_team_in_ds(chat_id, reg["sync_req_id"], user_id)
                     if updated_entity is not None:

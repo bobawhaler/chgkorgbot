@@ -640,7 +640,7 @@ def get_default_poll_closing_time():
     return datetime.datetime.now() + relativedelta(months=1)
 
 
-def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams, include_roster_prompt=True, sync_req_id=None, chat_id=None, is_canceled=False):
+def format_team_registration_text(tourn_name, url, representative_text, narrator_text, start_time, teams, include_roster_prompt=True, sync_req_id=None, chat_id=None, is_canceled=False, is_closed=False):
     lines = [
         f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}',
         "",
@@ -649,6 +649,10 @@ def format_team_registration_text(tourn_name, url, representative_text, narrator
         lines.extend([
             "❌ <b>Заявка отменена на сайте рейтинга.</b>",
             "<i>Регистрация закрыта.</i>",
+        ])
+    elif is_closed:
+        lines.extend([
+            "🔒 <b>Регистрация команд закрыта.</b>",
         ])
     else:
         lines.extend([
@@ -1504,6 +1508,53 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
     candidates = list(candidates_map.values())
     candidates.sort(key=lambda c: c["score"], reverse=True)
     return candidates
+
+
+def is_valid_team_name(name):
+    """
+    Validates whether the provided text can be a valid team name.
+    Rejects multiline messages, URLs, strings that are too long (>100 chars),
+    empty strings, or commands.
+    """
+    if not name or not isinstance(name, str):
+        return False
+    cleaned = name.strip()
+    if not cleaned or len(cleaned) > 100:
+        return False
+    if "\n" in cleaned or "\r" in cleaned:
+        return False
+    lower = cleaned.lower()
+    if lower.startswith("/"):
+        return False
+    if "http://" in lower or "https://" in lower or "t.me/" in lower:
+        return False
+    return True
+
+
+def is_registration_open(reg):
+    """
+    Returns True if team registration/editing is currently open for the tournament.
+    Registration is considered closed if:
+    - Tournament status is canceled, archived, or closed.
+    - More than 3 hours have passed since the tournament start time (game has finished).
+    - If start_time_ts is missing, more than 48 hours have passed since creation.
+    """
+    if not reg or not isinstance(reg, dict):
+        return False
+    if reg.get("status") in ("canceled", "archived", "closed"):
+        return False
+    now_ts = int(time.time())
+    start_ts = get_registration_start_ts(reg)
+    if start_ts:
+        # Tournament game usually lasts 2-3 hours; 3 hours after start_ts registration is closed.
+        if now_ts > start_ts + 3 * 3600:
+            return False
+    else:
+        created_at = reg.get("created_at")
+        created_ts = int(created_at.timestamp()) if (created_at and hasattr(created_at, "timestamp")) else 0
+        if created_ts and (now_ts - created_ts > 86400 * 2):
+            return False
+    return True
 
 
 

@@ -452,6 +452,248 @@ class TestRosterPrompts(unittest.TestCase):
         call_args = mock_send_msg.call_args[0]
         self.assertIn("У вас нет активной зарегистрированной команды", call_args[2])
 
+    @patch("datastore.cleanup_old_chat_commands")
+    @patch("datastore.cleanup_old_cached_tournaments")
+    @patch("datastore.update_team_registration")
+    @patch("telegram_api.send_message")
+    @patch("helpers.get_registration_start_ts")
+    @patch("helpers.get_chat_collect_rosters")
+    @patch("datastore.get_all_active_registrations")
+    @patch("datastore.cleanup_old_registrations")
+    @patch("datastore.get_monitored_venues")
+    @patch("datastore.traverse_finished_tasks")
+    def test_system_tic_handler_roster_reminder(
+        self,
+        mock_traverse_tasks,
+        mock_monitored_venues,
+        mock_cleanup_regs,
+        mock_get_active_regs,
+        mock_collect_rosters,
+        mock_start_ts,
+        mock_send_msg,
+        mock_update_reg,
+        mock_cleanup_cached,
+        mock_cleanup_cmds,
+    ):
+        import time
+        import handlers
+
+        mock_traverse_tasks.return_value = []
+        mock_monitored_venues.return_value = {}  # Empty venues so chat_id is not bound earlier
+        mock_collect_rosters.return_value = True
+
+        now_ts = int(time.time())
+        mock_start_ts.return_value = now_ts - 3600  # Started 1 hour ago
+
+        reg = {
+            "chat_id": -1001234567,
+            "sync_req_id": "98765",
+            "tourn_name": "Тестовый кубок",
+            "teams": [
+                {
+                    "user_id": 555,
+                    "team_name": "Знатоки",
+                    "roster_submitted": False,
+                    "roster": [],
+                    "reminders_count": 0,
+                }
+            ],
+        }
+        mock_get_active_regs.return_value = [reg]
+
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_send_msg.return_value = mock_resp
+
+        handlers.system_tic_handler()
+
+        mock_send_msg.assert_called_once()
+        args, kwargs = mock_send_msg.call_args
+        self.assertEqual(args[0], 555)  # recipient user_id
+        self.assertIn("Напоминание о сдаче состава", args[2])
+        reply_markup = kwargs.get("reply_markup")
+        self.assertIsNotNone(reply_markup)
+        web_app_url = reply_markup["inline_keyboard"][0][0]["web_app"]["url"]
+        self.assertIn("startapp=roster_98765_-1001234567", web_app_url)
+        mock_update_reg.assert_called_once_with(reg)
+        self.assertEqual(reg["teams"][0]["reminders_count"], 1)
+
+    def test_is_valid_team_name(self):
+        self.assertTrue(helpers.is_valid_team_name("Победа"))
+        self.assertTrue(helpers.is_valid_team_name("Знатоки"))
+        self.assertTrue(helpers.is_valid_team_name("Что? Где? Когда?"))
+        self.assertTrue(helpers.is_valid_team_name("Принцесса Апелляции на снятие в другом замке"))
+
+        # Rejects empty / whitespace / commands
+        self.assertFalse(helpers.is_valid_team_name(""))
+        self.assertFalse(helpers.is_valid_team_name("   "))
+        self.assertFalse(helpers.is_valid_team_name("/unregister"))
+        self.assertFalse(helpers.is_valid_team_name("/test"))
+
+        # Rejects multiline discussions
+        self.assertFalse(helpers.is_valid_team_name("Line 1\nLine 2"))
+        self.assertFalse(helpers.is_valid_team_name("Paragraph 1\r\nParagraph 2"))
+
+        # Rejects URLs
+        self.assertFalse(helpers.is_valid_team_name("Team https://rating.chgk.info"))
+        self.assertFalse(helpers.is_valid_team_name("Check http://example.com"))
+        self.assertFalse(helpers.is_valid_team_name("Join t.me/mychat"))
+
+        # Rejects long messages (>100 chars)
+        self.assertFalse(helpers.is_valid_team_name("A" * 101))
+
+    def test_is_registration_open(self):
+        import time
+        now_ts = int(time.time())
+
+        # Active tournament starting in the future
+        reg_future = {"status": "active", "start_time_ts": now_ts + 3600}
+        self.assertTrue(helpers.is_registration_open(reg_future))
+
+        # Active tournament that started 1 hour ago
+        reg_recent = {"status": "active", "start_time_ts": now_ts - 3600}
+        self.assertTrue(helpers.is_registration_open(reg_recent))
+
+        # Active tournament that started 4 hours ago (game finished)
+        reg_past = {"status": "active", "start_time_ts": now_ts - (4 * 3600)}
+        self.assertFalse(helpers.is_registration_open(reg_past))
+
+        # Canceled / archived / closed tournament
+        reg_canceled = {"status": "canceled", "start_time_ts": now_ts + 3600}
+        self.assertFalse(helpers.is_registration_open(reg_canceled))
+        reg_archived = {"status": "archived", "start_time_ts": now_ts + 3600}
+        self.assertFalse(helpers.is_registration_open(reg_archived))
+        reg_closed = {"status": "closed", "start_time_ts": now_ts + 3600}
+        self.assertFalse(helpers.is_registration_open(reg_closed))
+
+    @patch("datastore.register_team_in_ds")
+    @patch("datastore.get_team_registration_by_msg")
+    @patch("datastore.get_team_registration_by_team_msg")
+    def test_reply_to_another_team_message_does_not_register_team(
+        self,
+        mock_get_reg_by_team_msg,
+        mock_get_reg_by_msg,
+        mock_register_team,
+    ):
+        import handlers
+
+        # Replying to a teammate or other user's message (which has a team message id)
+        # mock_get_reg_by_msg returns None (because it's not the bot's announcement)
+        mock_get_reg_by_msg.return_value = None
+        mock_get_reg_by_team_msg.return_value = {
+            "sync_req_id": "12345",
+            "message_id": 100,
+            "status": "active",
+        }
+
+        body = {
+            "message": {
+                "message_id": 500,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 999, "username": "chatty_user"},
+                "text": "Я хз, в регламенте написано что-то другое...",
+                "reply_to_message": {"message_id": 200},
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_register_team.assert_not_called()
+
+    @patch("datastore.register_team_in_ds")
+    @patch("datastore.find_user_team_registration")
+    @patch("datastore.get_team_registration_by_team_msg")
+    def test_editing_unrelated_message_does_not_rename_team(
+        self,
+        mock_get_reg_by_team_msg,
+        mock_find_user_reg,
+        mock_register_team,
+    ):
+        import handlers
+
+        # User 777 has a registered team in the chat, but edits an unrelated message (id 999)
+        mock_get_reg_by_team_msg.return_value = None
+        mock_find_user_reg.return_value = (
+            {"sync_req_id": "12345", "status": "active"},
+            {"team_name": "Знатоки", "user_id": 777, "message_id": 555},
+        )
+
+        body = {
+            "edited_message": {
+                "message_id": 999,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 777, "username": "captain"},
+                "text": "Кто пойдет пить кофе?",
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_register_team.assert_not_called()
+
+    @patch("datastore.register_team_in_ds")
+    @patch("datastore.get_team_registration_by_msg")
+    def test_multiline_reply_rejected_as_team_name(
+        self,
+        mock_get_reg_by_msg,
+        mock_register_team,
+    ):
+        import handlers
+
+        mock_get_reg_by_msg.return_value = {
+            "sync_req_id": "12345",
+            "message_id": 100,
+            "status": "active",
+        }
+
+        # User replies to tournament announcement with a multiline discussion
+        body = {
+            "message": {
+                "message_id": 500,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 888, "username": "discussing_user"},
+                "text": "Я хз, в регламенте написано:\n3.8 На турнире разрешены апелляции\nhttps://rating.chgk.info",
+                "reply_to_message": {"message_id": 100},
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_register_team.assert_not_called()
+
+    @patch("datastore.register_team_in_ds")
+    @patch("datastore.get_team_registration_by_msg")
+    def test_reply_after_tournament_ended_does_not_register_team(
+        self,
+        mock_get_reg_by_msg,
+        mock_register_team,
+    ):
+        import time
+        import handlers
+
+        now_ts = int(time.time())
+        # Tournament ended 5 hours ago
+        mock_get_reg_by_msg.return_value = {
+            "sync_req_id": "12345",
+            "message_id": 100,
+            "status": "active",
+            "start_time_ts": now_ts - 5 * 3600,
+        }
+
+        body = {
+            "message": {
+                "message_id": 501,
+                "chat": {"id": -1001, "type": "supergroup"},
+                "from": {"id": 777, "username": "late_user"},
+                "text": "Опоздавшие",
+                "reply_to_message": {"message_id": 100},
+            }
+        }
+
+        handlers.command_handler(body)
+
+        mock_register_team.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
