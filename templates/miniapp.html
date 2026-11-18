@@ -802,6 +802,7 @@
         <h2 style="font-size: 19px; font-weight: 700; margin-bottom: 0; line-height: 1.3;" id="currentTournName">
           Название турнира
         </h2>
+        <div id="currentTournVenue" style="font-size: 13px; color: var(--hint-color); margin-top: 6px; display: none;"></div>
       </div>
 
       <!-- State A: Base Team NOT Chosen -->
@@ -898,9 +899,14 @@
 
         <!-- Smart Suggestions Card -->
         <div class="card hints-section">
-          <div class="card-title">
-            <span>💡 Подсказки игроков</span>
-            <span style="font-size: 11px; text-transform: none; color: var(--hint-color);">нажмите для добавления</span>
+          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span>💡 Подсказки игроков</span>
+              <span style="font-size: 11px; text-transform: none; color: var(--hint-color); font-weight: normal;">нажмите для добавления</span>
+            </div>
+            <button type="button" class="btn-refresh-hints" onclick="loadCandidates(true)" title="Обновить базовый состав и подсказки с сайта рейтинга" style="background: none; border: none; font-size: 12px; color: var(--link-color); cursor: pointer; padding: 2px 6px; display: inline-flex; align-items: center; gap: 4px;">
+              <span>🔄</span> <span>Обновить</span>
+            </button>
           </div>
           <div class="hints-grid" id="hintsList">
             <div style="text-align: center; padding: 12px; color: var(--hint-color);"><div class="spinner"></div></div>
@@ -1153,6 +1159,7 @@
       userRole: "guest",
       canSwitchRoles: false,
       activeTestRole: null,
+      selectedVenueFilter: "all",
       isRecalculatingStatuses: false
     };
 
@@ -1505,15 +1512,58 @@
             `;
           });
 
+          // Build venue filter bar if multiple venues exist
+          const venueMap = new Map();
+          (appData.tournaments || []).forEach(t => {
+            const vId = t.venue_id ? String(t.venue_id) : (t.chat_id ? `chat_${t.chat_id}` : "unknown");
+            const venue = t.venue || {};
+            const label = venue.name || (t.venue_id ? `Площадка #${t.venue_id}` : (t.chat_title || "Другая"));
+            if (!venueMap.has(vId)) {
+              venueMap.set(vId, { id: vId, label, count: 0 });
+            }
+            venueMap.get(vId).count += 1;
+          });
+          const hasMultipleVenues = venueMap.size > 1;
+
+          const venue = tourn.venue || {};
+          const venueName = venue.name || (tourn.venue_id ? `Площадка #${tourn.venue_id}` : "");
+          const venueTown = venue.town || "";
+          const chatTitle = tourn.chat_title || "";
+          let venueBadge = "";
+          if (hasMultipleVenues && (venueName || chatTitle)) {
+            let parts = [];
+            if (venueName) {
+              let s = `📍 <b>${escapeHtml(venueName)}</b>`;
+              if (tourn.venue_id) s += ` [ID ${tourn.venue_id}]`;
+              if (venueTown && venueTown !== venueName) s += ` (${escapeHtml(venueTown)})`;
+              parts.push(s);
+            }
+            if (chatTitle) {
+              parts.push(`💬 ${escapeHtml(chatTitle)}`);
+            }
+            venueBadge = `
+              <div class="tourn-venue-row" style="font-size: 12px; color: var(--hint-color); margin-top: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                ${parts.join(" • ")}
+              </div>
+            `;
+          }
+
+          const csvBtnLabel = (hasMultipleVenues && venueName)
+            ? `✉️ Отправить CSV файл (${escapeHtml(venueName)}) в Telegram`
+            : `✉️ Отправить CSV файл для рейтинга в Telegram`;
+
           return `
             <div class="tourn-card">
-              <div class="tourn-card-header">
-                <div class="tourn-card-title">🏆 ${escapeHtml(tourn.tourn_name || "Турнир")}</div>
-                ${statsBadge}
+              <div class="tourn-card-header" style="${venueBadge ? 'display: flex; flex-direction: column; align-items: stretch; gap: 4px;' : ''}">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                  <div class="tourn-card-title">🏆 ${escapeHtml(tourn.tourn_name || "Турнир")}</div>
+                  ${statsBadge}
+                </div>
+                ${venueBadge}
               </div>
               <div class="tourn-actions-bar">
                 <button class="btn-csv" onclick="sendTournamentCsvToTg('${tourn.sync_req_id}', '${tourn.chat_id}')">
-                  <span>✉️ Отправить CSV файл для рейтинга в Telegram</span>
+                  <span>${csvBtnLabel}</span>
                 </button>
               </div>
               <div style="font-size: 12px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin: 10px 0 6px 0; letter-spacing: 0.3px;">
@@ -1575,24 +1625,68 @@
           return res;
         }
 
+        // Build venue filter bar if multiple venues exist
+        const venueMap = new Map();
+        (appData.tournaments || []).forEach(t => {
+          const vId = t.venue_id ? String(t.venue_id) : (t.chat_id ? `chat_${t.chat_id}` : "unknown");
+          const venue = t.venue || {};
+          const label = venue.name || (t.venue_id ? `Площадка #${t.venue_id}` : (t.chat_title || "Другая"));
+          if (!venueMap.has(vId)) {
+            venueMap.set(vId, { id: vId, label, count: 0 });
+          }
+          venueMap.get(vId).count += 1;
+        });
+
+        let filterBarHtml = "";
+        if (venueMap.size > 1) {
+          const isAll = !appData.selectedVenueFilter || appData.selectedVenueFilter === "all";
+          filterBarHtml += `
+            <div class="venue-filter-bar" style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 12px; scrollbar-width: none;">
+              <button class="role-pill ${isAll ? 'active' : ''}" onclick="setVenueFilter('all')">
+                Все площадки (${appData.tournaments.length})
+              </button>
+          `;
+          venueMap.forEach(v => {
+            const isActive = appData.selectedVenueFilter === v.id;
+            filterBarHtml += `
+              <button class="role-pill ${isActive ? 'active' : ''}" onclick="setVenueFilter('${escapeHtml(v.id)}')">
+                📍 ${escapeHtml(v.label)} (${v.count})
+              </button>
+            `;
+          });
+          filterBarHtml += `</div>`;
+        }
+
+        const visibleItems = [];
+        (appData.tournaments || []).forEach((t, idx) => {
+          if (!appData.selectedVenueFilter || appData.selectedVenueFilter === "all") {
+            visibleItems.push({ tourn: t, idx });
+          } else {
+            const vId = t.venue_id ? String(t.venue_id) : (t.chat_id ? `chat_${t.chat_id}` : "unknown");
+            if (vId === appData.selectedVenueFilter) {
+              visibleItems.push({ tourn: t, idx });
+            }
+          }
+        });
+
         let html = "";
         if (forcePlayerView) {
-          appData.tournaments.forEach((tourn, idx) => {
-            html += renderPlayerTournHtml(tourn, idx);
+          visibleItems.forEach(item => {
+            html += renderPlayerTournHtml(item.tourn, item.idx);
           });
         } else if (forceRepView) {
-          appData.tournaments.forEach((tourn, idx) => {
-            html += renderRepTournHtml(tourn, idx);
+          visibleItems.forEach(item => {
+            html += renderRepTournHtml(item.tourn, item.idx);
           });
         } else {
           // Native mixed-role handling: split by each tournament's actual role
           const repTourns = [];
           const playerTourns = [];
-          appData.tournaments.forEach((tourn, idx) => {
-            if (tourn.is_representative) {
-              repTourns.push({ tourn, idx });
+          visibleItems.forEach(item => {
+            if (item.tourn.is_representative) {
+              repTourns.push(item);
             } else {
-              playerTourns.push({ tourn, idx });
+              playerTourns.push(item);
             }
           });
 
@@ -1626,7 +1720,7 @@
           }
         }
 
-        container.innerHTML = guestPromptCard + html;
+        container.innerHTML = guestPromptCard + filterBarHtml + html;
       } catch (renderErr) {
         console.error("renderTournamentsList error:", renderErr);
         container.innerHTML = `
@@ -2133,8 +2227,46 @@
       renderTournamentsList();
     }
 
+    function setVenueFilter(vId) {
+      appData.selectedVenueFilter = vId;
+      renderTournamentsList();
+    }
+
     function updateRosterScreenHeader() {
-      document.getElementById("currentTournName").innerText = appData.currentReg?.tourn_name || "Турнир";
+      const tourn = appData.currentTourn || appData.currentReg;
+      document.getElementById("currentTournName").innerText = tourn?.tourn_name || "Турнир";
+
+      const tournVenueEl = document.getElementById("currentTournVenue");
+      if (tournVenueEl) {
+        const isRepOrAdmin = Boolean(appData.userRole === "admin" || appData.canSwitchRoles || tourn?.is_representative);
+        const venueCount = new Set((appData.tournaments || []).map(t => t.venue_id || t.chat_id)).size;
+        const hasMultiple = venueCount > 1;
+
+        if (isRepOrAdmin && hasMultiple) {
+          const venue = tourn?.venue || {};
+          const venueName = venue.name || (tourn?.venue_id ? `Площадка #${tourn.venue_id}` : "");
+          const venueTown = venue.town || "";
+          const chatTitle = tourn?.chat_title || "";
+          if (venueName || chatTitle) {
+            let vParts = [];
+            if (venueName) {
+              let s = `📍 <b>${escapeHtml(venueName)}</b>`;
+              if (tourn.venue_id) s += ` [ID ${tourn.venue_id}]`;
+              if (venueTown && venueTown !== venueName) s += ` (${escapeHtml(venueTown)})`;
+              vParts.push(s);
+            }
+            if (chatTitle) {
+              vParts.push(`💬 ${escapeHtml(chatTitle)}`);
+            }
+            tournVenueEl.innerHTML = vParts.join(" • ");
+            tournVenueEl.style.display = "block";
+          } else {
+            tournVenueEl.style.display = "none";
+          }
+        } else {
+          tournVenueEl.style.display = "none";
+        }
+      }
 
       const hasBaseTeam = Boolean(appData.isBaseTeamConfirmed || appData.currentRatingTeamId);
 
@@ -2395,6 +2527,10 @@
       const uid = appData.user?.id || unsafeUser?.id || "";
       const cacheKey = `${appData.currentRatingTeamId || 0}_${appData.currentChatId || 0}_${uid}_${appData.currentTargetUserId || 0}_${appData.currentTeamName || ""}`;
 
+      if (forceRefresh && appData.candidatesCache && appData.candidatesCache[cacheKey]) {
+        delete appData.candidatesCache[cacheKey];
+      }
+
       if (!forceRefresh && appData.candidatesCache && appData.candidatesCache[cacheKey]) {
         const cached = appData.candidatesCache[cacheKey];
         appData.candidates = cached.candidates || [];
@@ -2418,6 +2554,9 @@
           user_id: uid,
           target_user_id: appData.currentTargetUserId || ""
         });
+        if (forceRefresh) {
+          params.append("force_refresh", "1");
+        }
 
         const resp = await fetch(`/api/miniapp/candidates?${params.toString()}`);
         if (!resp.ok) throw new Error("Ошибка загрузки подсказок");
@@ -2427,6 +2566,9 @@
         appData.candidatesCache[cacheKey] = data;
         recalculateRosterStatuses();
         renderCandidatesList();
+        if (forceRefresh) {
+          showToast("Базовый состав и подсказки обновлены");
+        }
       } catch (e) {
         container.innerHTML = '<div style="text-align: center; padding: 10px; color: var(--hint-color);">Подсказки недоступны</div>';
       }
@@ -2658,7 +2800,7 @@
             `;
           } else {
             html += `
-              <div class="hint-item" onclick="addFoundPlayer(${p.id}, '${escapeQuotes(p.name)}', '${escapeQuotes(p.surname)}', '${escapeQuotes(p.patronymic || "")}')">
+              <div class="hint-item" onclick="addFoundPlayer(${p.id}, '${escapeQuotes(p.name)}', '${escapeQuotes(p.surname)}', '${escapeQuotes(p.patronymic || "")}', '${p.default_status || "L"}')">
                 <div class="hint-info">
                   <div class="hint-name"><span>&#128100;</span> <b>${escapeHtml(fio)}</b></div>
                   <div class="hint-sub">${sub}</div>
@@ -2675,7 +2817,7 @@
       }
     }
 
-    function addFoundPlayer(pid, name, surname, patronymic) {
+    function addFoundPlayer(pid, name, surname, patronymic, defaultStatus) {
       const fio = `${surname || ""} ${name || ""}`.trim();
       const conflictTeam = getPlayerConflictTeam(pid, name, surname);
       if (conflictTeam) {
@@ -2683,15 +2825,25 @@
         return;
       }
       haptic("impact", "medium");
+
+      let statusToSet = defaultStatus || "L";
+      if (pid && appData.candidates) {
+        const c = appData.candidates.find(cand => Number(cand.pid) === Number(pid));
+        if (c && c.default_status) {
+          statusToSet = c.default_status;
+        }
+      }
+
       appData.currentRoster.push({
         player_id: pid,
         name: name,
         surname: surname,
         patronymic: patronymic,
-        status: "L"
+        status: statusToSet
       });
       document.getElementById("playerSearchInput").value = "";
       document.getElementById("playerSearchResults").innerHTML = "";
+      recalculateRosterStatuses();
       renderRosterList();
       renderCandidatesList();
     }

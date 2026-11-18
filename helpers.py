@@ -1154,6 +1154,34 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
     query_clean = (query or "").strip().lower().replace("ё", "е")
     query_words = query_clean.split()
 
+    base_pids = set()
+    captain_id = None
+    if rating_team_id:
+        try:
+            b_res = rating_api.get_team_base_players(rating_team_id)
+            if b_res and isinstance(b_res, (tuple, list)) and len(b_res) == 2:
+                base_pids = set(b_res[0]) if b_res[0] else set()
+                captain_id = b_res[1]
+        except Exception:
+            pass
+
+    def attach_player_status(entry):
+        pid = entry.get("id")
+        if pid and rating_team_id:
+            if captain_id and pid == captain_id:
+                entry["default_status"] = "K"
+                if not entry.get("badge") or entry.get("badge") == "🛡 Состав команды":
+                    entry["badge"] = "👑 Капитан"
+            elif base_pids and pid in base_pids:
+                entry["default_status"] = "B"
+                if not entry.get("badge") or entry.get("badge") == "🛡 Состав команды":
+                    entry["badge"] = "🛡 Базовый"
+            else:
+                entry["default_status"] = "L"
+        else:
+            entry["default_status"] = "L"
+        return entry
+
     def matches_query(full_name_str):
         if not query_words:
             return True
@@ -1332,10 +1360,10 @@ def search_players_tiered(query, user_id=None, rating_team_id=None, chat_id=None
             except Exception as e:
                 print(f"Error in rating_api.search_players during tiered search: {e}")
 
-    return results
+    return [attach_player_status(r) for r in results]
 
 
-def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, chat_id=None):
+def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, chat_id=None, force_refresh=False):
     """
     Computes ranked candidate suggestions for building a team roster with strict priority:
     1. User's profile & User history players (highest priority).
@@ -1350,7 +1378,7 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
     captain_id = None
     if rating_team_id:
         try:
-            b_res = rating_api.get_team_base_players(rating_team_id)
+            b_res = rating_api.get_team_base_players(rating_team_id, force_refresh=force_refresh)
             if b_res and isinstance(b_res, (tuple, list)) and len(b_res) == 2:
                 base_pids = set(b_res[0]) if b_res[0] else set()
                 captain_id = b_res[1]
@@ -1442,7 +1470,7 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
 
     # 3. Base team players from rating site API
     if rating_team_id:
-        team_players = rating_api.get_team_players(rating_team_id)
+        team_players = rating_api.get_team_players(rating_team_id, force_refresh=force_refresh)
         for tp in team_players:
             pid = tp.get("id") or tp.get("player_id")
             pname = f"{tp.get('surname', '')} {tp.get('name', '')}".strip()
@@ -1475,6 +1503,33 @@ def get_roster_candidates(user_id, rating_team_id=None, current_roster=None, cha
             t_score += tp.get("tourn_recency", 0) * 20.0
             t_score += tp.get("season_recency", 0) * 100.0
             candidates_map[key]["score"] += t_score
+
+        # 3b. Ensure all base team players are included in candidates
+        for b_pid in base_pids:
+            if not b_pid or b_pid in roster_pids:
+                continue
+            key = f"pid_{b_pid}"
+            if key not in candidates_map:
+                bp_info = rating_api.get_player_by_id(b_pid)
+                if bp_info:
+                    bp_name = f"{bp_info.get('surname', '')} {bp_info.get('name', '')}".strip()
+                    if bp_name.lower() in roster_names:
+                        continue
+                    is_cap = (b_pid == captain_id)
+                    candidates_map[key] = {
+                        "pid": b_pid,
+                        "name": bp_info.get("name", ""),
+                        "surname": bp_info.get("surname", ""),
+                        "patronymic": bp_info.get("patronymic", ""),
+                        "town": bp_info.get("town", ""),
+                        "pname": bp_name,
+                        "is_base": True,
+                        "is_captain": is_cap,
+                        "category": "team",
+                        "badge": "👑 Капитан" if is_cap else "🛡 Базовый",
+                        "default_status": "K" if is_cap else "B",
+                        "score": 8000.0 if is_cap else 6000.0,
+                    }
 
         # 4. Venue team players (played for this team at chat's venue)
         venue_ids = []

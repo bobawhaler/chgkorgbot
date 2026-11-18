@@ -184,6 +184,7 @@ def api_miniapp_init():
                             raw_regs.append({
                                 "sync_req_id": reg.get("sync_req_id"),
                                 "chat_id": r_cid,
+                                "venue_id": reg.get("venue_id"),
                                 "tourn_name": reg.get("tourn_name"),
                                 "is_representative": False,
                                 "teams": [ut],
@@ -193,6 +194,7 @@ def api_miniapp_init():
                         raw_regs.append({
                             "sync_req_id": reg.get("sync_req_id"),
                             "chat_id": r_cid,
+                            "venue_id": reg.get("venue_id"),
                             "tourn_name": reg.get("tourn_name"),
                             "is_representative": False,
                             "teams": [{
@@ -219,6 +221,7 @@ def api_miniapp_init():
                     raw_regs.append({
                         "sync_req_id": reg.get("sync_req_id"),
                         "chat_id": r_cid,
+                        "venue_id": reg.get("venue_id"),
                         "tourn_name": reg.get("tourn_name"),
                         "is_representative": True,
                         "teams": teams,
@@ -253,6 +256,7 @@ def api_miniapp_init():
                         raw_regs.append({
                             "sync_req_id": reg.get("sync_req_id"),
                             "chat_id": r_cid,
+                            "venue_id": reg.get("venue_id"),
                             "tourn_name": reg.get("tourn_name"),
                             "is_representative": True,
                             "teams": teams,
@@ -263,6 +267,7 @@ def api_miniapp_init():
                             raw_regs.append({
                                 "sync_req_id": reg.get("sync_req_id"),
                                 "chat_id": r_cid,
+                                "venue_id": reg.get("venue_id"),
                                 "tourn_name": reg.get("tourn_name"),
                                 "is_representative": False,
                                 "teams": [ut],
@@ -280,9 +285,51 @@ def api_miniapp_init():
         for reg in raw_regs:
             sync_req_id = reg.get("sync_req_id")
             reg_chat_id = reg.get("chat_id")
+            venue_id = reg.get("venue_id")
             is_rep = bool(reg.get("is_representative") or (is_admin and active_test_role in ("admin", "rep", "representative", None)))
             if active_test_role == "player":
                 is_rep = False
+
+            if not venue_id and reg_chat_id:
+                try:
+                    monitored = datastore.get_monitored_venues()
+                    for v_id, c_ids in monitored.items():
+                        if str(reg_chat_id) in [str(c) for c in c_ids]:
+                            venue_id = int(v_id) if str(v_id).isdigit() else v_id
+                            break
+                except Exception as e:
+                    print(f"Error resolving venue from monitored_venues: {e}")
+
+                if not venue_id:
+                    try:
+                        c_cfg = datastore.get_chat_config(reg_chat_id)
+                        if c_cfg and c_cfg.get("venues"):
+                            first_v = c_cfg["venues"][0]
+                            venue_id = int(first_v) if str(first_v).isdigit() else first_v
+                    except Exception as e:
+                        print(f"Error resolving venue from chat_config: {e}")
+
+                if not venue_id and sync_req_id and str(sync_req_id).isdigit():
+                    try:
+                        sr_details = rating_api.get_sync_request_details(sync_req_id)
+                        if sr_details and sr_details.get("venue_id"):
+                            venue_id = sr_details["venue_id"]
+                    except Exception as e:
+                        print(f"Error resolving venue from rating API sync request: {e}")
+
+                # Backfill resolved venue_id into Datastore entity so subsequent requests are instant
+                if venue_id and not reg.get("venue_id"):
+                    try:
+                        ds_client = datastore.get_datastore_client()
+                        ds_key = ds_client.key("TeamRegistration", f"{reg_chat_id}_{sync_req_id}")
+                        reg_entity = ds_client.get(ds_key)
+                        if reg_entity and not reg_entity.get("venue_id"):
+                            v_val = int(venue_id) if str(venue_id).isdigit() else venue_id
+                            reg_entity["venue_id"] = v_val
+                            ds_client.put(reg_entity)
+                            reg["venue_id"] = v_val
+                    except Exception as e:
+                        print(f"Error persisting backfilled venue_id for {sync_req_id}: {e}")
 
             if reg_chat_id:
                 try:
@@ -293,6 +340,23 @@ def api_miniapp_init():
                                 venue_ids.append(vid)
                 except Exception as e:
                     print(f"Error getting chat config: {e}")
+
+            if venue_id and venue_id not in venue_ids:
+                venue_ids.append(venue_id)
+
+            venue_info = None
+            if venue_id:
+                try:
+                    venue_info = rating_api.get_venue_by_id(venue_id)
+                except Exception as e:
+                    print(f"Error fetching venue info for {venue_id}: {e}")
+
+            chat_title = ""
+            if reg_chat_id:
+                try:
+                    chat_title = datastore.get_chat_title(reg_chat_id)
+                except Exception as e:
+                    print(f"Error getting chat title: {e}")
 
             raw_teams = reg.get("teams", [])
             tourn_name = reg.get("tourn_name", "Турнир")
@@ -327,6 +391,9 @@ def api_miniapp_init():
                     registrations.append({
                         "sync_req_id": sync_req_id,
                         "chat_id": reg_chat_id,
+                        "venue_id": venue_id,
+                        "venue": venue_info,
+                        "chat_title": chat_title,
                         "tourn_name": tourn_name,
                         "is_representative": is_rep,
                         "team": team_dict
@@ -358,6 +425,9 @@ def api_miniapp_init():
             tournaments.append({
                 "sync_req_id": sync_req_id,
                 "chat_id": reg_chat_id,
+                "venue_id": venue_id,
+                "venue": venue_info,
+                "chat_title": chat_title,
                 "tourn_name": tourn_name,
                 "is_representative": is_rep,
                 "submitted_count": submitted_count,
@@ -446,7 +516,27 @@ def api_miniapp_export_csv():
         filename = f"roster_{sync_req_id}_{tourn_name_safe}.csv"
 
         if send_tg:
-            caption = f"📄 <b>Файл импорта составов для сайта рейтинга</b>\nТурнир: «{tourn_name}»\nКоманд: {len(teams)}"
+            venue_id = reg.get("venue_id")
+            if not venue_id and chat_id:
+                try:
+                    monitored = datastore.get_monitored_venues()
+                    for v_id, c_ids in monitored.items():
+                        if str(chat_id) in [str(c) for c in c_ids]:
+                            venue_id = int(v_id) if str(v_id).isdigit() else v_id
+                            break
+                except Exception:
+                    pass
+
+            venue_info = rating_api.get_venue_by_id(venue_id) if venue_id else None
+            venue_str = ""
+            if venue_info and venue_info.get("name"):
+                v_name = venue_info["name"]
+                v_town = venue_info.get("town", "")
+                venue_str = f"\nПлощадка: {v_name}" + (f" ({v_town})" if v_town and v_town != v_name else "")
+            elif venue_id:
+                venue_str = f"\nПлощадка ID: {venue_id}"
+
+            caption = f"📄 <b>Файл импорта составов для сайта рейтинга</b>\nТурнир: «{tourn_name}»{venue_str}\nКоманд: {len(teams)}"
             telegram_api.send_document(user_id, csv_content, filename, caption=caption)
             return jsonify({"ok": True, "sent_to_tg": True, "filename": filename})
 
@@ -638,6 +728,8 @@ def api_miniapp_candidates():
     chat_id_raw = request.args.get("chat_id")
     target_uid_raw = request.args.get("target_user_id")
     init_data = request.args.get("initData", "")
+    force_refresh_raw = request.args.get("force_refresh", "")
+    force_refresh = force_refresh_raw.lower() in ("1", "true", "yes")
     
     user, user_id, is_admin = get_authenticated_user({"initData": init_data, "user_id": user_id_raw})
     
@@ -654,7 +746,7 @@ def api_miniapp_candidates():
         if cfg and "venues" in cfg:
             venue_ids = list(cfg["venues"])
 
-    candidates = helpers.get_roster_candidates(effective_uid, team_id, chat_id=chat_id)
+    candidates = helpers.get_roster_candidates(effective_uid, team_id, chat_id=chat_id, force_refresh=force_refresh)
     display_names = datastore.get_team_suggested_display_names(
         team_id=team_id,
         base_team_name=base_name,

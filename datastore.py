@@ -500,7 +500,7 @@ def search_cached_players(query, limit=10):
     return []
 
 
-def get_cached_team_base_roster(team_id):
+def get_cached_team_base_roster(team_id, max_age_hours=12):
     if not team_id:
         return None
     try:
@@ -508,6 +508,15 @@ def get_cached_team_base_roster(team_id):
         key = datastore_client.key("CachedTeamBase", str(team_id))
         entity = datastore_client.get(key)
         if entity:
+            cached_at = entity.get("cached_at")
+            if max_age_hours is not None:
+                if not cached_at:
+                    return None
+                if not getattr(cached_at, "tzinfo", None):
+                    cached_at = pytz.utc.localize(cached_at)
+                age = datetime.datetime.now(pytz.utc) - cached_at
+                if age > datetime.timedelta(hours=max_age_hours):
+                    return None
             base_pids = set(entity.get("base_pids", []))
             captain_id = entity.get("captain_id")
             return base_pids, captain_id
@@ -534,7 +543,22 @@ def cache_team_base_roster(team_id, base_pids, captain_id):
         print(f"Error writing CachedTeamBase team_id={team_id}: {e}")
 
 
-def get_cached_team_players(team_id):
+def cleanup_old_cached_team_base(days=14):
+    try:
+        datastore_client = get_datastore_client()
+        threshold = datetime.datetime.now(pytz.utc) - relativedelta(days=days)
+        query = datastore_client.query(kind="CachedTeamBase")
+        query.add_filter(filter=PropertyFilter("cached_at", "<", threshold))
+        entities = list(query.fetch(limit=200))
+        if entities:
+            keys = [e.key for e in entities]
+            datastore_client.delete_multi(keys)
+            print(f"[CLEANUP] Deleted {len(keys)} old CachedTeamBase records")
+    except Exception as e:
+        print(f"Error in cleanup_old_cached_team_base: {e}")
+
+
+def get_cached_team_players(team_id, max_age_hours=24):
     if not team_id:
         return None
     try:
@@ -542,6 +566,15 @@ def get_cached_team_players(team_id):
         key = datastore_client.key("CachedTeamPlayers", str(team_id))
         entity = datastore_client.get(key)
         if entity and "players" in entity:
+            cached_at = entity.get("cached_at")
+            if max_age_hours is not None:
+                if not cached_at:
+                    return None
+                if not getattr(cached_at, "tzinfo", None):
+                    cached_at = pytz.utc.localize(cached_at)
+                age = datetime.datetime.now(pytz.utc) - cached_at
+                if age > datetime.timedelta(hours=max_age_hours):
+                    return None
             return json.loads(entity["players"])
     except Exception as e:
         print(f"Error reading CachedTeamPlayers team_id={team_id}: {e}")
@@ -579,9 +612,113 @@ def cache_team_players(team_id, players):
         print(f"Error writing CachedTeamPlayers team_id={team_id}: {e}")
 
 
+def cleanup_old_cached_team_players(days=14):
+    try:
+        datastore_client = get_datastore_client()
+        threshold = datetime.datetime.now(pytz.utc) - relativedelta(days=days)
+        query = datastore_client.query(kind="CachedTeamPlayers")
+        query.add_filter(filter=PropertyFilter("cached_at", "<", threshold))
+        entities = list(query.fetch(limit=200))
+        if entities:
+            keys = [e.key for e in entities]
+            datastore_client.delete_multi(keys)
+            print(f"[CLEANUP] Deleted {len(keys)} old CachedTeamPlayers records")
+    except Exception as e:
+        print(f"Error in cleanup_old_cached_team_players: {e}")
+
+
+def get_cached_venue(venue_id, max_age_days=14):
+    if not venue_id:
+        return None
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("CachedVenue", str(venue_id))
+        entity = datastore_client.get(key)
+        if not entity:
+            return None
+        cached_at = entity.get("cached_at")
+        if cached_at:
+            if cached_at.tzinfo is None:
+                cached_at = pytz.utc.localize(cached_at)
+            age = (datetime.datetime.now(pytz.utc) - cached_at).total_seconds()
+            if age > max_age_days * 86400:
+                print(f"[CACHE EXPIRED] CachedVenue {venue_id} age={age:.1f}s > {max_age_days * 86400}s")
+                return None
+        return dict(entity)
+    except Exception as e:
+        print(f"Error reading CachedVenue {venue_id}: {e}")
+        return None
+
+
+def cache_venue(venue_id, data):
+    if not venue_id or not data:
+        return
+    try:
+        datastore_client = get_datastore_client()
+        key = datastore_client.key("CachedVenue", str(venue_id))
+        entity = datastore.Entity(key=key)
+
+        name = data.get("name") or ""
+        town = ""
+        if isinstance(data.get("town"), dict):
+            town = data["town"].get("name", "")
+        elif isinstance(data.get("town"), str):
+            town = data.get("town")
+
+        entity.update({
+            "venue_id": int(venue_id) if str(venue_id).isdigit() else str(venue_id),
+            "name": name,
+            "town": town,
+            "raw_data": json.dumps(data, ensure_ascii=False) if isinstance(data, dict) else "",
+            "cached_at": datetime.datetime.now(pytz.utc),
+        })
+        datastore_client.put(entity)
+        print(f"[CACHE WRITE] cached venue {venue_id}: {name}")
+    except Exception as e:
+        print(f"Error writing CachedVenue {venue_id}: {e}")
+
+
+def get_chat_title(chat_id):
+    if not chat_id:
+        return ""
+    try:
+        datastore_client = get_datastore_client()
+        chat_key = datastore_client.key("ChatConfig", str(chat_id))
+        entity = datastore_client.get(chat_key)
+        if entity:
+            title = entity.get("chat_title") or entity.get("title")
+            if title:
+                return str(title)
+
+        query = datastore_client.query(kind="ChatCommand")
+        query.add_filter(filter=PropertyFilter("chat_id", "=", int(chat_id)))
+        entities = list(query.fetch(limit=1))
+        if entities and entities[0].get("chat_title"):
+            return str(entities[0]["chat_title"])
+    except Exception as e:
+        print(f"Error fetching chat title for {chat_id}: {e}")
+    return ""
+
+
+def save_chat_title(chat_id, chat_title):
+    if not chat_id or not chat_title:
+        return
+    try:
+        datastore_client = get_datastore_client()
+        chat_key = datastore_client.key("ChatConfig", str(chat_id))
+        entity = datastore_client.get(chat_key)
+        if not entity:
+            entity = datastore.Entity(key=chat_key)
+        if entity.get("chat_title") != chat_title:
+            entity["chat_title"] = chat_title
+            datastore_client.put(entity)
+    except Exception as e:
+        print(f"Error saving chat title for {chat_id}: {e}")
+
+
 # --- Team Registration & Roster Functions ---
 
-def add_team_registration(chat_id, thread_id, sync_req_id, message_id, tourn_name, representative_text="", narrator_text="", start_time="", start_time_ts=None, created_by_user_id=None, tourn_id=None, register_teams=True):
+def add_team_registration(chat_id, thread_id, sync_req_id, message_id, tourn_name, representative_text="", narrator_text="", start_time="", start_time_ts=None, created_by_user_id=None, tourn_id=None, register_teams=True, venue_id=None):
     datastore_client = get_datastore_client()
     key = datastore_client.key("TeamRegistration", f"{chat_id}_{sync_req_id}")
     entity = datastore.Entity(key=key, exclude_from_indexes=("teams",))
@@ -597,6 +734,7 @@ def add_team_registration(chat_id, thread_id, sync_req_id, message_id, tourn_nam
         "start_time_ts": start_time_ts,
         "created_by_user_id": created_by_user_id,
         "tourn_id": tourn_id,
+        "venue_id": int(venue_id) if venue_id and str(venue_id).isdigit() else venue_id,
         "register_teams": register_teams,
         "teams": [],
         "status": "active",

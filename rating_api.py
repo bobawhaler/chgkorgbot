@@ -226,6 +226,56 @@ def get_upcoming_sync_requests(venue_id):
     return result
 
 
+def get_venue_by_id(venue_id):
+    if not venue_id:
+        return None
+    try:
+        import datastore
+        cached = datastore.get_cached_venue(venue_id)
+        if cached:
+            print(f"[CACHE HIT] get_venue_by_id venue_id={venue_id}")
+            return {
+                "id": cached.get("venue_id", venue_id),
+                "name": cached.get("name", ""),
+                "town": cached.get("town", ""),
+            }
+    except Exception as e:
+        print(f"[CACHE ERROR] failed to read cache in get_venue_by_id for {venue_id}: {e}")
+
+    t0 = time.perf_counter()
+    url = f"{API_URL}/venues/{venue_id}"
+    try:
+        response = requests.get(url, headers={"Accept": "application/json"}, timeout=5)
+        if not response.ok:
+            print(f"Error getting venue by id {venue_id}, {response.status_code}, {response.reason}")
+            return None
+        v_data = response.json()
+    except Exception as e:
+        print(f"Error fetching venue {venue_id}: {e}")
+        return None
+
+    debug.log("rating_api.get_venue_by_id", t0, f"venue_id={venue_id}")
+    if v_data:
+        try:
+            import datastore
+            datastore.cache_venue(venue_id, v_data)
+        except Exception as e:
+            print(f"[CACHE ERROR] failed to write cache in get_venue_by_id for {venue_id}: {e}")
+
+        town = ""
+        if isinstance(v_data.get("town"), dict):
+            town = v_data["town"].get("name", "")
+        elif isinstance(v_data.get("town"), str):
+            town = v_data.get("town")
+
+        return {
+            "id": v_data.get("id", venue_id),
+            "name": v_data.get("name", ""),
+            "town": town,
+        }
+    return None
+
+
 def get_sync_request_details(sync_req_id):
     t0 = time.perf_counter()
     if not sync_req_id:
@@ -253,10 +303,22 @@ def get_sync_request_details(sync_req_id):
     except Exception:
         date_start = datetime.datetime.now(pytz.utc)
 
+    venue_id = None
+    venue_ref = sync_req.get("venue")
+    if isinstance(venue_ref, dict):
+        venue_id = venue_ref.get("id")
+    elif isinstance(venue_ref, int):
+        venue_id = venue_ref
+    elif isinstance(venue_ref, str):
+        m = re.search(r'\d+', venue_ref)
+        if m:
+            venue_id = int(m.group(0))
+
     debug.log("rating_api.get_sync_request_details", t0, f"sync_req_id={sync_req_id}")
     return {
         "id": str(sync_req.get("id", sync_req_id)),
         "tourn_id": sync_req.get("tournamentId"),
+        "venue_id": venue_id,
         "status": sync_req.get("status"),
         "representative": sync_req.get("representative"),
         "narrator": narrator,
@@ -535,20 +597,21 @@ def get_player_by_id(pid):
     return None
 
 
-def get_team_players(team_id):
+def get_team_players(team_id, force_refresh=False, max_age_hours=24):
     t0 = time.perf_counter()
     if not team_id:
         return []
 
-    cached = datastore.get_cached_team_players(team_id)
-    if cached is not None:
-        debug.log("rating_api.get_team_players [CACHED]", t0, f"team_id={team_id} -> {len(cached)}")
-        return cached
+    if not force_refresh:
+        cached = datastore.get_cached_team_players(team_id, max_age_hours=max_age_hours)
+        if cached is not None:
+            debug.log("rating_api.get_team_players [CACHED]", t0, f"team_id={team_id} -> {len(cached)}")
+            return cached
 
     players_dict = {}
     try:
         # 1. Fetch recent season members (latest 2 seasons)
-        resp = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 100}, headers={"Accept": "application/json"})
+        resp = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 1000}, headers={"Accept": "application/json"}, timeout=4)
         if resp.ok:
             data = resp.json()
             if isinstance(data, list) and data:
@@ -632,36 +695,78 @@ def get_team_players(team_id):
     result = list(players_dict.values())
     if result:
         datastore.cache_team_players(team_id, result)
-    debug.log("rating_api.get_team_players", t0, f"team_id={team_id} -> {len(result)}")
-    return result
+        debug.log("rating_api.get_team_players", t0, f"team_id={team_id} -> {len(result)}")
+        return result
+
+    # Fallback to stale cache if API failed
+    stale_cached = datastore.get_cached_team_players(team_id, max_age_hours=None)
+    if stale_cached is not None:
+        debug.log("rating_api.get_team_players [STALE FALLBACK]", t0, f"team_id={team_id} -> {len(stale_cached)}")
+        return stale_cached
+
+    debug.log("rating_api.get_team_players", t0, f"team_id={team_id} -> 0")
+    return []
 
 
-def get_team_base_players(team_id):
+def get_team_base_players(team_id, force_refresh=False, max_age_hours=12):
     if not team_id:
         return set(), None
 
-    cached = datastore.get_cached_team_base_roster(team_id)
-    if cached is not None:
-        return cached
+    if not force_refresh:
+        cached = datastore.get_cached_team_base_roster(team_id, max_age_hours=max_age_hours)
+        if cached is not None:
+            return cached
 
     try:
-        resp = requests.get(f"{API_URL}/teams/{team_id}/seasons", params={"itemsPerPage": 100}, headers={"Accept": "application/json"}, timeout=4)
+        resp = requests.get(
+            f"{API_URL}/teams/{team_id}/seasons",
+            params={"itemsPerPage": 1000},
+            headers={"Accept": "application/json"},
+            timeout=4,
+        )
         if resp.ok:
             data = resp.json()
             if isinstance(data, list) and data:
-                max_season = max((item.get("idseason", 0) for item in data if isinstance(item, dict)), default=0)
-                base_items = [item for item in data if isinstance(item, dict) and item.get("idseason") == max_season and not item.get("dateRemoved")]
-                base_pids = {item["idplayer"] for item in base_items if item.get("idplayer")}
+                max_season = max((int(item.get("idseason") or 0) for item in data if isinstance(item, dict)), default=0)
+                base_items = [
+                    item for item in data
+                    if isinstance(item, dict)
+                    and int(item.get("idseason") or 0) == max_season
+                    and not item.get("dateRemoved")
+                ]
+                # Fallback to the latest season that had active players if max_season has none
+                if not base_items:
+                    active_seasons = [
+                        int(item.get("idseason") or 0) for item in data
+                        if isinstance(item, dict) and not item.get("dateRemoved") and item.get("idplayer")
+                    ]
+                    if active_seasons:
+                        fallback_season = max(active_seasons)
+                        base_items = [
+                            item for item in data
+                            if isinstance(item, dict)
+                            and int(item.get("idseason") or 0) == fallback_season
+                            and not item.get("dateRemoved")
+                        ]
+
+                base_pids = {int(item["idplayer"]) for item in base_items if item.get("idplayer")}
                 captain_id = None
                 for item in base_items:
                     if item.get("captain") or item.get("playerNumber") == 1:
-                        captain_id = item.get("idplayer")
+                        captain_id = int(item.get("idplayer"))
                         break
                 datastore.cache_team_base_roster(team_id, base_pids, captain_id)
                 return base_pids, captain_id
     except Exception as e:
         print(f"Error fetching base players for team_id={team_id}: {e}")
+
+    # Fallback to stale cache if API failed
+    stale_cached = datastore.get_cached_team_base_roster(team_id, max_age_hours=None)
+    if stale_cached is not None:
+        return stale_cached
+
     return set(), None
+
 
 
 def search_players(query):

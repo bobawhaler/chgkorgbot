@@ -127,6 +127,15 @@ def check_and_update_active_sync_requests(monitored_venues):
                 if s_id not in remote_by_id:
                     continue
 
+                # Backfill venue_id if not present
+                if not reg.get("venue_id") and venue_id:
+                    try:
+                        v_val = int(venue_id) if str(venue_id).isdigit() else venue_id
+                        reg["venue_id"] = v_val
+                        datastore.get_datastore_client().put(reg)
+                    except Exception as e:
+                        print(f"Error backfilling venue_id for reg {s_id}: {e}")
+
                 remote_req = remote_by_id[s_id]
                 remote_dt = remote_req.get("dateStart")
                 if not remote_dt:
@@ -322,6 +331,7 @@ def system_tic_handler():
                                 created_by_user_id=rep_user_id,
                                 tourn_id=sync_req["tourn_id"],
                                 register_teams=True,
+                                venue_id=int(venue_id) if str(venue_id).isdigit() else venue_id,
                             )
                 else:
                     msg_text = f'Подана заявка на <a href="{url}">"{tourn_name}"</a>. {representative_text}. {narrator_text}. Начало: {start_time}'
@@ -356,6 +366,7 @@ def system_tic_handler():
                                 created_by_user_id=rep_user_id,
                                 tourn_id=sync_req["tourn_id"],
                                 register_teams=False,
+                                venue_id=int(venue_id) if str(venue_id).isdigit() else venue_id,
                             )
 
     # Check for updates in existing active sync requests (e.g. edited start time, narrator, cancellation)
@@ -442,6 +453,8 @@ def system_tic_handler():
             datastore.update_team_registration(reg)
 
     datastore.cleanup_old_cached_tournaments()
+    datastore.cleanup_old_cached_team_base(days=14)
+    datastore.cleanup_old_cached_team_players(days=14)
     datastore.cleanup_old_chat_commands()
     debug.log("system_tic_handler", t0)
 
@@ -867,6 +880,8 @@ def command_handler(body):
                     thread_id=msg_thread_id,
                     llm_date=llm_date_str,
                 )
+                if chat_id and chat_title:
+                    datastore.save_chat_title(chat_id, chat_title)
 
             if chat_type == "private":
                 handled = handle_private_message(body)
