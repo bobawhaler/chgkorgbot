@@ -96,6 +96,40 @@ class TestDateParsing(unittest.TestCase):
             self.assertEqual(res[0]["id"], 99999)
             self.assertTrue(res[0]["rating"])
 
+    def test_get_tourns_only_rated_optimization(self):
+        import rating_api
+        fake_tourns = [
+            {
+                "id": 1,
+                "name": "Не рейтингуемый турнир",
+                "type": {"name": "Синхрон"},
+                "difficultyForecast": 3.0,
+                "rating": False,
+                "editors": [],
+            },
+            {
+                "id": 2,
+                "name": "Рейтингуемый турнир",
+                "type": {"name": "Синхрон"},
+                "difficultyForecast": 4.0,
+                "rating": True,
+                "editors": [],
+            },
+        ]
+        with patch.object(rating_api, "_fetch_paginated", return_value=fake_tourns), \
+             patch("helpers.get_chat_min_difficulty", return_value=1.0) as mock_min_diff, \
+             patch("helpers.get_chat_max_difficulty", return_value=8.0) as mock_max_diff, \
+             patch("datastore.cache_tournaments_batch"):
+            # only_rated=True should return only tourn id 2
+            res = rating_api.get_tourns(
+                datetime.date(2026, 10, 15), {}, 12345, with_time=False, only_rated=True
+            )
+            self.assertEqual(len(res), 1)
+            self.assertEqual(res[0]["id"], 2)
+            # Ensure helpers were called only once (outside the loop), not for each tournament
+            self.assertEqual(mock_min_diff.call_count, 1)
+            self.assertEqual(mock_max_diff.call_count, 1)
+
 
     def test_get_active_gemini_model_default_and_env(self):
         # 1. Environment variable override

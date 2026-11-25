@@ -600,20 +600,32 @@ def normalize_tourn_name(name):
         .strip()
     )
 
-def get_chat_timezone(chat_id):
-    chat_config = datastore.get_chat_config(chat_id)
+def get_chat_timezone(chat_id, chat_config=None):
+    if chat_config is None:
+        try:
+            chat_config = datastore.get_chat_config(chat_id)
+        except Exception:
+            chat_config = None
     if chat_config and "timezone" in chat_config:
         return resolve_timezone(chat_config["timezone"])
     return DEFAULT_TIMEZONE
 
-def get_chat_min_difficulty(chat_id):
-    chat_config = datastore.get_chat_config(chat_id)
+def get_chat_min_difficulty(chat_id, chat_config=None):
+    if chat_config is None:
+        try:
+            chat_config = datastore.get_chat_config(chat_id)
+        except Exception:
+            chat_config = None
     if chat_config and "min_difficulty" in chat_config:
         return chat_config["min_difficulty"]
     return DEFAULT_MIN_DIFFICULTY
 
-def get_chat_max_difficulty(chat_id):
-    chat_config = datastore.get_chat_config(chat_id)
+def get_chat_max_difficulty(chat_id, chat_config=None):
+    if chat_config is None:
+        try:
+            chat_config = datastore.get_chat_config(chat_id)
+        except Exception:
+            chat_config = None
     if chat_config and "max_difficulty" in chat_config:
         return chat_config["max_difficulty"]
     return DEFAULT_MAX_DIFFICULTY

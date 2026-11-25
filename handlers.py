@@ -5,6 +5,7 @@ import re
 import datetime
 import pytz
 import html
+import threading
 
 import rating_api
 import telegram_api
@@ -931,53 +932,77 @@ def command_handler(body):
             if msg_text.startswith("/"):
                 raw_parts = [s for s in msg_text.split() if not s.startswith("@")]
                 cmd_name = raw_parts[0].split("@")[0].lower() if raw_parts else ""
-                llm_date_str = None
 
-                try:
-                    if cmd_name in ("/tourns", "/rtourns"):
-                        date_input = " ".join(raw_parts[1:]) if len(raw_parts) > 1 else "сегодня"
-                        tz = helpers.get_chat_timezone(chat_id)
-                        gem_dt, with_t = helpers.parse_date_gemini(date_input, tz)
-                        if gem_dt:
-                            llm_date_str = helpers._format_date_res(gem_dt, with_t)
-                            leg_dt, leg_with_t = helpers.parse_date(date_input, tz)
-                            if helpers._is_date_mismatch(leg_dt, leg_with_t, gem_dt, with_t):
-                                print(
-                                    f"[DATE_PARSER_MISMATCH] Command '{cmd_name} {date_input}' (TZ: {tz}):\n"
-                                    f"  Legacy -> {helpers._format_date_res(leg_dt, leg_with_t)}\n"
-                                    f"  Gemini -> {llm_date_str}"
-                                )
-                    elif cmd_name == "/poll" and len(raw_parts) > 2:
-                        date_input = " ".join(raw_parts[2:])
-                        tz = helpers.get_chat_timezone(chat_id)
-                        gem_dt, with_t = helpers.parse_date_gemini(date_input, tz)
-                        if gem_dt:
-                            llm_date_str = helpers._format_date_res(gem_dt, with_t)
-                            leg_dt, leg_with_t = helpers.parse_date(date_input, tz)
-                            if helpers._is_date_mismatch(leg_dt, leg_with_t, gem_dt, with_t):
-                                print(
-                                    f"[DATE_PARSER_MISMATCH] Command '{cmd_name} {date_input}' (TZ: {tz}):\n"
-                                    f"  Legacy -> {helpers._format_date_res(leg_dt, leg_with_t)}\n"
-                                    f"  Gemini -> {llm_date_str}"
-                                )
-                except Exception as e:
-                    print(f"Error extracting LLM date for command logging: {e}")
+                def _log_command_background(
+                    c_id, u_id, m_text, c_type, c_title,
+                    u_name, f_name, l_name, m_id, m_thread_id,
+                    c_name, r_parts,
+                ):
+                    llm_date_str = None
+                    try:
+                        if c_name in ("/tourns", "/rtourns"):
+                            date_input = " ".join(r_parts[1:]) if len(r_parts) > 1 else "сегодня"
+                            tz = helpers.get_chat_timezone(c_id)
+                            gem_dt, with_t = helpers.parse_date_gemini(date_input, tz)
+                            if gem_dt:
+                                llm_date_str = helpers._format_date_res(gem_dt, with_t)
+                                leg_dt, leg_with_t = helpers.parse_date(date_input, tz)
+                                if helpers._is_date_mismatch(leg_dt, leg_with_t, gem_dt, with_t):
+                                    print(
+                                        f"[DATE_PARSER_MISMATCH] Command '{c_name} {date_input}' (TZ: {tz}):\n"
+                                        f"  Legacy -> {helpers._format_date_res(leg_dt, leg_with_t)}\n"
+                                        f"  Gemini -> {llm_date_str}"
+                                    )
+                        elif c_name == "/poll" and len(r_parts) > 2:
+                            date_input = " ".join(r_parts[2:])
+                            tz = helpers.get_chat_timezone(c_id)
+                            gem_dt, with_t = helpers.parse_date_gemini(date_input, tz)
+                            if gem_dt:
+                                llm_date_str = helpers._format_date_res(gem_dt, with_t)
+                                leg_dt, leg_with_t = helpers.parse_date(date_input, tz)
+                                if helpers._is_date_mismatch(leg_dt, leg_with_t, gem_dt, with_t):
+                                    print(
+                                        f"[DATE_PARSER_MISMATCH] Command '{c_name} {date_input}' (TZ: {tz}):\n"
+                                        f"  Legacy -> {helpers._format_date_res(leg_dt, leg_with_t)}\n"
+                                        f"  Gemini -> {llm_date_str}"
+                                    )
+                    except Exception as e:
+                        print(f"Error extracting LLM date for command logging: {e}")
 
-                datastore.save_chat_command(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    text=msg_text,
-                    chat_type=chat_type,
-                    chat_title=chat_title,
-                    username=username,
-                    first_name=first_name,
-                    last_name=last_name,
-                    message_id=msg_id,
-                    thread_id=msg_thread_id,
-                    llm_date=llm_date_str,
-                )
-                if chat_id and chat_title:
-                    datastore.save_chat_title(chat_id, chat_title)
+                    datastore.save_chat_command(
+                        chat_id=c_id,
+                        user_id=u_id,
+                        text=m_text,
+                        chat_type=c_type,
+                        chat_title=c_title,
+                        username=u_name,
+                        first_name=f_name,
+                        last_name=l_name,
+                        message_id=m_id,
+                        thread_id=m_thread_id,
+                        llm_date=llm_date_str,
+                    )
+                    if c_id and c_title:
+                        datastore.save_chat_title(c_id, c_title)
+
+                threading.Thread(
+                    target=_log_command_background,
+                    args=(
+                        chat_id,
+                        user_id,
+                        msg_text,
+                        chat_type,
+                        chat_title,
+                        username,
+                        first_name,
+                        last_name,
+                        msg_id,
+                        msg_thread_id,
+                        cmd_name,
+                        raw_parts,
+                    ),
+                    daemon=True,
+                ).start()
 
             if chat_type == "private":
                 handled = handle_private_message(body)
@@ -1257,6 +1282,7 @@ def command_handler(body):
                     chat_id,
                     with_time=with_time,
                     only_rated=only_rated,
+                    chat_config=chat_config,
                 )
                 tourns_to_show, tourns_to_save = helpers.get_tourns_representations(
                     tourns_list

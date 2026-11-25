@@ -329,7 +329,7 @@ def get_sync_request_details(sync_req_id, timeout=5):
     }
 
 
-def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=False):
+def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=False, chat_config=None):
     t0 = time.perf_counter()
     from_date = (tourn_date - relativedelta(months=1)).strftime("%Y-%m-%d")
     try:
@@ -348,6 +348,18 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
         }
     if _debug:
         print("played_syncs:", played_syncs)
+
+    # Pre-fetch chat settings once outside the loop to avoid redundant Datastore calls per tournament
+    if chat_config is None and chat_id:
+        try:
+            import datastore
+            chat_config = datastore.get_chat_config(chat_id)
+        except Exception:
+            chat_config = None
+
+    min_diff = helpers.get_chat_min_difficulty(chat_id, chat_config=chat_config)
+    max_diff = helpers.get_chat_max_difficulty(chat_id, chat_config=chat_config)
+    chat_tz = None
 
     if with_time:
         to_date = tourn_date.astimezone(pytz.utc).strftime("%Y-%m-%d %H:%M")
@@ -391,14 +403,15 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
             or tourn.get("ggRating")
             or ("chgkgg" in (tourn.get("ratingSystems") or []))
         )
+        if only_rated and not is_rated:
+            continue
         if (
             "difficultyForecast" in tourn
             and tourn["difficultyForecast"]
             and (
-                tourn["difficultyForecast"] < helpers.get_chat_min_difficulty(chat_id)
-                or tourn["difficultyForecast"] > helpers.get_chat_max_difficulty(chat_id)
+                tourn["difficultyForecast"] < min_diff
+                or tourn["difficultyForecast"] > max_diff
             )
-            or (only_rated and not is_rated)
         ):
             continue
         if (
@@ -423,8 +436,10 @@ def get_tourns(tourn_date, played_tourns, chat_id, with_time=None, only_rated=Fa
         )
         if tourn["type"]["name"] in ("Асинхрон", "Онлайн"):
             norm_name = helpers.normalize_tourn_name(tourn["name"])
+            if chat_tz is None:
+                chat_tz = helpers.get_chat_timezone(chat_id, chat_config=chat_config)
             async_start_date, _ = helpers.parse_date(
-                tourn["dateStart"], helpers.get_chat_timezone(chat_id)
+                tourn["dateStart"], chat_tz
             )
             sync_from_date = (async_start_date - relativedelta(months=1)).strftime(
                 "%Y-%m-%d"
