@@ -182,7 +182,7 @@ def get_upcoming_sync_requests(venue_id):
     now = datetime.datetime.now(pytz.utc)
     from_date = (now - relativedelta(days=2)).strftime("%Y-%m-%d")
     result = []
-    if not venue_id:
+    if not venue_id or not str(venue_id).strip().isdigit():
         return result
 
     params = {"dateStart[after]": from_date}
@@ -226,8 +226,11 @@ def get_upcoming_sync_requests(venue_id):
     return result
 
 
-def get_venue_by_id(venue_id):
+def get_venue_by_id(venue_id, timeout=5):
     if not venue_id:
+        return None
+    venue_str = str(venue_id).strip()
+    if not venue_str.isdigit():
         return None
     try:
         import datastore
@@ -245,14 +248,14 @@ def get_venue_by_id(venue_id):
     t0 = time.perf_counter()
     url = f"{API_URL}/venues/{venue_id}"
     try:
-        response = requests.get(url, headers={"Accept": "application/json"}, timeout=5)
+        response = requests.get(url, headers={"Accept": "application/json"}, timeout=timeout)
         if not response.ok:
             print(f"Error getting venue by id {venue_id}, {response.status_code}, {response.reason}")
-            return None
+            return {"id": venue_id, "name": f"Площадка #{venue_id}", "town": ""}
         v_data = response.json()
     except Exception as e:
         print(f"Error fetching venue {venue_id}: {e}")
-        return None
+        return {"id": venue_id, "name": f"Площадка #{venue_id}", "town": ""}
 
     debug.log("rating_api.get_venue_by_id", t0, f"venue_id={venue_id}")
     if v_data:
@@ -276,13 +279,13 @@ def get_venue_by_id(venue_id):
     return None
 
 
-def get_sync_request_details(sync_req_id):
+def get_sync_request_details(sync_req_id, timeout=5):
     t0 = time.perf_counter()
     if not sync_req_id:
         return None
     url = f"{API_URL}/tournament_synch_requests/{sync_req_id}"
     try:
-        response = requests.get(url, headers={"Accept": "application/json"}, timeout=5)
+        response = requests.get(url, headers={"Accept": "application/json"}, timeout=timeout)
         if not response.ok:
             return None
         sync_req = response.json()
@@ -881,7 +884,7 @@ def sync_venue_history(venue_id, months=12):
     t0 = time.perf_counter()
     import datastore
 
-    if not venue_id:
+    if not venue_id or not str(venue_id).strip().isdigit():
         return {"teams_count": 0, "tournaments_count": 0}
 
     state = datastore.get_venue_sync_state(venue_id) or {}

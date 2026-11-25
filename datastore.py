@@ -130,7 +130,7 @@ def update_chat_config(chat_id, thread_id, **kwargs):
             
         for k, v in kwargs.items():
             if k == "venues" and isinstance(v, str):
-                entity[k] = [venue.strip() for venue in v.split(",") if venue.strip()]
+                entity[k] = [venue.strip() for venue in v.split(",") if venue.strip().isdigit()]
             else:
                 entity[k] = v
                 
@@ -628,7 +628,7 @@ def cleanup_old_cached_team_players(days=14):
 
 
 def get_cached_venue(venue_id, max_age_days=14):
-    if not venue_id:
+    if not venue_id or not str(venue_id).strip().isdigit():
         return None
     try:
         datastore_client = get_datastore_client()
@@ -651,12 +651,12 @@ def get_cached_venue(venue_id, max_age_days=14):
 
 
 def cache_venue(venue_id, data):
-    if not venue_id or not data:
+    if not venue_id or not data or not str(venue_id).strip().isdigit():
         return
     try:
         datastore_client = get_datastore_client()
         key = datastore_client.key("CachedVenue", str(venue_id))
-        entity = datastore.Entity(key=key)
+        entity = datastore.Entity(key=key, exclude_from_indexes=("raw_data",))
 
         name = data.get("name") or ""
         town = ""
@@ -678,6 +678,99 @@ def cache_venue(venue_id, data):
         print(f"Error writing CachedVenue {venue_id}: {e}")
 
 
+def get_cached_venues_multi(venue_ids, max_age_days=14):
+    """
+    Batch fetches CachedVenue entities for multiple venue IDs in a single Datastore call.
+    Returns: dict mapping str(venue_id) -> entity dict (or None if expired/not found).
+    """
+    if not venue_ids:
+        return {}
+    clean_ids = [str(vid).strip() for vid in venue_ids if vid and str(vid).strip().isdigit()]
+    if not clean_ids:
+        return {}
+    try:
+        datastore_client = get_datastore_client()
+        keys = [datastore_client.key("CachedVenue", vid) for vid in clean_ids]
+        entities = datastore_client.get_multi(keys)
+        res = {}
+        now = datetime.datetime.now(pytz.utc)
+        for entity in entities:
+            if not entity:
+                continue
+            cached_at = entity.get("cached_at")
+            if cached_at:
+                if cached_at.tzinfo is None:
+                    cached_at = pytz.utc.localize(cached_at)
+                age = (now - cached_at).total_seconds()
+                if age > max_age_days * 86400:
+                    continue
+            vid_key = str(entity.get("venue_id") or (entity.key.name if hasattr(entity, "key") and entity.key else ""))
+            if isinstance(entity, dict):
+                d = dict(entity)
+            else:
+                d = {
+                    "venue_id": entity.get("venue_id"),
+                    "name": entity.get("name"),
+                    "town": entity.get("town"),
+                    "cached_at": cached_at,
+                }
+            res[vid_key] = d
+        return res
+    except Exception as e:
+        print(f"Error reading CachedVenues batch: {e}")
+        res = {}
+        for vid in clean_ids:
+            try:
+                cv = get_cached_venue(vid, max_age_days=max_age_days)
+                if cv:
+                    res[str(vid)] = cv
+            except Exception:
+                pass
+        return res
+
+
+def get_chat_configs_multi(chat_ids):
+    """
+    Batch fetches ChatConfig entities for multiple chat IDs.
+    Returns: dict mapping str(chat_id) -> dict(entity)
+    """
+    if not chat_ids:
+        return {}
+    clean_ids = [str(cid) for cid in chat_ids if cid]
+    if not clean_ids:
+        return {}
+    try:
+        datastore_client = get_datastore_client()
+        keys = [datastore_client.key("ChatConfig", cid) for cid in clean_ids]
+        entities = datastore_client.get_multi(keys)
+        res = {}
+        for entity in entities:
+            if entity:
+                cid = str(entity.get("chat_id") or (entity.key.name if hasattr(entity, "key") and entity.key else ""))
+                if isinstance(entity, dict):
+                    d = dict(entity)
+                else:
+                    d = {
+                        "chat_id": entity.get("chat_id"),
+                        "chat_title": entity.get("chat_title"),
+                        "title": entity.get("title"),
+                        "venues": entity.get("venues") or [],
+                    }
+                res[cid] = d
+        return res
+    except Exception as e:
+        print(f"Error reading ChatConfigs batch: {e}")
+        res = {}
+        for cid in clean_ids:
+            try:
+                cfg = get_chat_config(cid)
+                if cfg:
+                    res[str(cid)] = cfg
+            except Exception:
+                pass
+        return res
+
+
 def get_chat_title(chat_id):
     if not chat_id:
         return ""
@@ -694,7 +787,12 @@ def get_chat_title(chat_id):
         query.add_filter(filter=PropertyFilter("chat_id", "=", int(chat_id)))
         entities = list(query.fetch(limit=1))
         if entities and entities[0].get("chat_title"):
-            return str(entities[0]["chat_title"])
+            title = str(entities[0]["chat_title"])
+            try:
+                save_chat_title(chat_id, title)
+            except Exception:
+                pass
+            return title
     except Exception as e:
         print(f"Error fetching chat title for {chat_id}: {e}")
     return ""
@@ -1747,10 +1845,10 @@ def increment_user_registration_reminders_count(user_id, username=""):
 
 def get_venue_sync_state(venue_id):
     try:
-        if not venue_id:
+        if not venue_id or not str(venue_id).strip().isdigit():
             return None
         datastore_client = get_datastore_client()
-        key = datastore_client.key("VenueSyncState", str(venue_id))
+        key = datastore_client.key("VenueSyncState", str(venue_id).strip())
         entity = datastore_client.get(key)
         if entity:
             return {
@@ -1766,10 +1864,10 @@ def get_venue_sync_state(venue_id):
 
 def save_venue_sync_state(venue_id, last_synced_at, synced_req_ids):
     try:
-        if not venue_id:
+        if not venue_id or not str(venue_id).strip().isdigit():
             return
         datastore_client = get_datastore_client()
-        key = datastore_client.key("VenueSyncState", str(venue_id))
+        key = datastore_client.key("VenueSyncState", str(venue_id).strip())
         entity = datastore.Entity(key=key, exclude_from_indexes=("synced_req_ids",))
         # Keep up to 2000 recent sync_req_ids to avoid unbounded entity size
         clean_req_ids = [str(x) for x in list(synced_req_ids)][-2000:]
@@ -1863,10 +1961,10 @@ def sync_tournament_results_to_ds(sync_req_id, venue_id, results_list):
 
 def get_venue_data(venue_id):
     try:
-        if not venue_id:
+        if not venue_id or not str(venue_id).strip().isdigit():
             return {"teams": []}
         datastore_client = get_datastore_client()
-        key = datastore_client.key("VenueData", str(venue_id))
+        key = datastore_client.key("VenueData", str(venue_id).strip())
         entity = datastore_client.get(key)
         if entity:
             return {
@@ -1884,10 +1982,10 @@ def get_venue_team_roster(venue_id, team_id):
     Fetches the roster of players who played for team_id at venue_id.
     """
     try:
-        if not venue_id or not team_id:
+        if not venue_id or not team_id or not str(venue_id).strip().isdigit():
             return []
         datastore_client = get_datastore_client()
-        key = datastore_client.key("VenueTeamRoster", f"{venue_id}_{team_id}")
+        key = datastore_client.key("VenueTeamRoster", f"{str(venue_id).strip()}_{team_id}")
         entity = datastore_client.get(key)
         if entity:
             return list(entity.get("players", []))
@@ -1902,9 +2000,12 @@ def get_venues_team_rosters(venue_ids, team_id):
     """
     if not venue_ids or not team_id:
         return []
+    clean_vids = [str(vid).strip() for vid in venue_ids if vid and str(vid).strip().isdigit()]
+    if not clean_vids:
+        return []
     try:
         datastore_client = get_datastore_client()
-        keys = [datastore_client.key("VenueTeamRoster", f"{vid}_{team_id}") for vid in venue_ids]
+        keys = [datastore_client.key("VenueTeamRoster", f"{vid}_{team_id}") for vid in clean_vids]
         entities = datastore_client.get_multi(keys)
         merged = {}
         for entity in entities:
@@ -1929,39 +2030,50 @@ def get_venues_team_rosters(venue_ids, team_id):
 
 def get_venues_data(venue_ids):
     """
-    Fetches and aggregates venue teams across multiple venue IDs.
+    Fetches and aggregates venue teams across multiple venue IDs using batch Datastore RPC.
     Returns: {"teams": [...]}
     """
     if not venue_ids:
         return {"teams": []}
 
+    clean_vids = [str(vid).strip() for vid in venue_ids if vid and str(vid).strip().isdigit()]
+    if not clean_vids:
+        return {"teams": []}
+
     aggregated_teams = {}
 
-    for vid in venue_ids:
-        v_data = get_venue_data(vid)
-        for t in v_data.get("teams", []):
-            tid = t.get("team_id") or t.get("id")
-            if not tid:
+    try:
+        datastore_client = get_datastore_client()
+        keys = [datastore_client.key("VenueData", vid) for vid in clean_vids]
+        entities = datastore_client.get_multi(keys)
+        for entity in entities:
+            if not entity:
                 continue
-            key = str(tid)
-            if key not in aggregated_teams:
-                aggregated_teams[key] = {
-                    "team_id": tid,
-                    "name": t.get("name") or t.get("team_name", "Команда"),
-                    "town": t.get("town", ""),
-                    "tourn_count": t.get("tourn_count", 0),
-                    "last_played_ts": t.get("last_played_ts", 0),
-                    "display_names": list(t.get("display_names", [])),
-                }
-            else:
-                aggregated_teams[key]["tourn_count"] += t.get("tourn_count", 0)
-                aggregated_teams[key]["last_played_ts"] = max(
-                    aggregated_teams[key]["last_played_ts"], t.get("last_played_ts", 0)
-                )
-                curr_dns = aggregated_teams[key].setdefault("display_names", [])
-                for dn in t.get("display_names", []):
-                    if dn and dn not in curr_dns:
-                        curr_dns.append(dn)
+            for t in entity.get("teams", []):
+                tid = t.get("team_id") or t.get("id")
+                if not tid:
+                    continue
+                key = str(tid)
+                if key not in aggregated_teams:
+                    aggregated_teams[key] = {
+                        "team_id": tid,
+                        "name": t.get("name") or t.get("team_name", "Команда"),
+                        "town": t.get("town", ""),
+                        "tourn_count": t.get("tourn_count", 0),
+                        "last_played_ts": t.get("last_played_ts", 0),
+                        "display_names": list(t.get("display_names", [])),
+                    }
+                else:
+                    aggregated_teams[key]["tourn_count"] += t.get("tourn_count", 0)
+                    aggregated_teams[key]["last_played_ts"] = max(
+                        aggregated_teams[key]["last_played_ts"], t.get("last_played_ts", 0)
+                    )
+                    curr_dns = aggregated_teams[key].setdefault("display_names", [])
+                    for dn in t.get("display_names", []):
+                        if dn and dn not in curr_dns:
+                            curr_dns.append(dn)
+    except Exception as e:
+        print(f"Error getting batch venues_data for venues {venue_ids}: {e}")
 
     final_teams = sorted(
         list(aggregated_teams.values()),
@@ -1976,10 +2088,11 @@ def update_venue_data_incremental(venue_id, new_teams, new_team_rosters, new_tea
     Merges newly fetched teams, rosters, and display names into VenueData and VenueTeamRoster entities.
     """
     try:
-        if not venue_id:
+        if not venue_id or not str(venue_id).strip().isdigit():
             return
+        vid_int = int(venue_id)
         datastore_client = get_datastore_client()
-        key = datastore_client.key("VenueData", str(venue_id))
+        key = datastore_client.key("VenueData", str(vid_int))
 
         with datastore_client.transaction():
             entity = datastore_client.get(key)
@@ -2036,7 +2149,7 @@ def update_venue_data_incremental(venue_id, new_teams, new_team_rosters, new_tea
 
             entity.exclude_from_indexes.add("teams")
             entity.update({
-                "venue_id": int(venue_id),
+                "venue_id": vid_int,
                 "teams": sorted_teams[:500],
                 "updated_at": datetime.datetime.now(pytz.utc),
             })
@@ -2047,7 +2160,7 @@ def update_venue_data_incremental(venue_id, new_teams, new_team_rosters, new_tea
         if not all_tids:
             return
 
-        existing_roster_keys = [datastore_client.key("VenueTeamRoster", f"{venue_id}_{tid_str}") for tid_str in all_tids if tid_str]
+        existing_roster_keys = [datastore_client.key("VenueTeamRoster", f"{vid_int}_{tid_str}") for tid_str in all_tids if tid_str]
         existing_entities_map = {}
         for i in range(0, len(existing_roster_keys), 400):
             batch_e = datastore_client.get_multi(existing_roster_keys[i:i+400])
@@ -2061,7 +2174,7 @@ def update_venue_data_incremental(venue_id, new_teams, new_team_rosters, new_tea
         for tid_str in all_tids:
             if not tid_str:
                 continue
-            r_key_name = f"{venue_id}_{tid_str}"
+            r_key_name = f"{vid_int}_{tid_str}"
             r_key = datastore_client.key("VenueTeamRoster", r_key_name)
             prev_entity = existing_entities_map.get(r_key_name)
             r_entity = datastore.Entity(key=r_key, exclude_from_indexes=("players", "display_names"))
@@ -2082,7 +2195,7 @@ def update_venue_data_incremental(venue_id, new_teams, new_team_rosters, new_tea
                 pkey = str(pid)
                 if pkey not in p_dict:
                     p_dict[pkey] = {
-                        "player_id": int(pid),
+                        "player_id": int(pid) if str(pid).isdigit() else pid,
                         "name": p.get("name", ""),
                         "surname": p.get("surname", ""),
                         "patronymic": p.get("patronymic", ""),
@@ -2127,8 +2240,8 @@ def update_venue_data_incremental(venue_id, new_teams, new_team_rosters, new_tea
             sorted_dnames = sorted(list(d_dict.values()), key=lambda x: (x.get("tourn_count", 0), x.get("last_played_ts", 0)), reverse=True)
 
             r_entity.update({
-                "venue_id": int(venue_id),
-                "team_id": int(tid_str),
+                "venue_id": vid_int,
+                "team_id": int(tid_str) if str(tid_str).isdigit() else tid_str,
                 "players": sorted_players[:50],
                 "display_names": sorted_dnames[:20],
                 "updated_at": now_utc,

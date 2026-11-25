@@ -40,6 +40,17 @@ def set_webhook():
 #     return response.json()
 
 
+@app.route("/_ah/warmup")
+def warmup():
+    """App Engine warmup request handler to preheat instance and caches."""
+    try:
+        datastore.get_datastore_client()
+        datastore.get_monitored_venues()
+    except Exception as e:
+        print(f"Error during warmup: {e}")
+    return "", 200
+
+
 @app.route("/systemtic", methods=["GET"])
 def system_tic():
     handlers.system_tic_handler()
@@ -169,194 +180,256 @@ def api_miniapp_init():
             if requested_role and requested_role != stored_role:
                 datastore.set_user_test_role(user_id, requested_role)
 
+        try:
+            all_active = datastore.get_all_active_registrations()
+        except Exception as e:
+            print(f"Error fetching active registrations: {e}")
+            all_active = []
+
+        # 1. Batch pre-fetch all ChatConfig entities in 1 single Datastore call
+        all_chat_ids = list({reg.get("chat_id") for reg in all_active if reg.get("chat_id")})
+        chat_configs_map = datastore.get_chat_configs_multi(all_chat_ids) if all_chat_ids else {}
+
+        def is_chat_collect_rosters(cid):
+            if not cid:
+                return False
+            cfg = chat_configs_map.get(str(cid))
+            if cfg and "collect_rosters" in cfg:
+                return bool(cfg["collect_rosters"])
+            return helpers.get_chat_collect_rosters(cid)
+
+        # Filter all_active to only include tournaments/venues where roster collection is enabled
+        roster_active = [r for r in all_active if is_chat_collect_rosters(r.get("chat_id"))]
+
+        raw_regs = []
+
         if active_test_role == "guest":
             raw_regs = []
         elif active_test_role == "player":
-            try:
-                all_active = datastore.get_all_active_registrations()
-                raw_regs = []
-                for reg in all_active:
-                    r_cid = reg.get("chat_id")
-                    teams = reg.get("teams", [])
-                    user_teams = [t for t in teams if t.get("user_id") == user_id]
-                    if user_teams:
-                        for ut in user_teams:
-                            raw_regs.append({
-                                "sync_req_id": reg.get("sync_req_id"),
-                                "chat_id": r_cid,
-                                "venue_id": reg.get("venue_id"),
-                                "tourn_name": reg.get("tourn_name"),
-                                "is_representative": False,
-                                "teams": [ut],
-                                "all_teams": teams
-                            })
-                    else:
-                        raw_regs.append({
-                            "sync_req_id": reg.get("sync_req_id"),
-                            "chat_id": r_cid,
-                            "venue_id": reg.get("venue_id"),
-                            "tourn_name": reg.get("tourn_name"),
-                            "is_representative": False,
-                            "teams": [{
-                                "team_name": "Тестовая Команда",
-                                "display_name": "Тестовая Команда",
-                                "user_id": user_id,
-                                "rating_team_id": None,
-                                "town": "Берлин",
-                                "roster": [],
-                                "roster_submitted": False
-                            }],
-                            "all_teams": teams
-                        })
-            except Exception as e:
-                print(f"Error in player role simulation: {e}")
-                raw_regs = []
-        elif active_test_role in ("rep", "representative"):
-            try:
-                all_active = datastore.get_all_active_registrations()
-                raw_regs = []
-                for reg in all_active:
-                    r_cid = reg.get("chat_id")
-                    teams = reg.get("teams", [])
+            # For player: ONLY tournaments where user registered teams, and within those tournaments, ONLY user's teams
+            for reg in roster_active:
+                teams = reg.get("teams", [])
+                user_teams = [t for t in teams if t.get("user_id") == user_id]
+                if user_teams:
                     raw_regs.append({
                         "sync_req_id": reg.get("sync_req_id"),
-                        "chat_id": r_cid,
+                        "chat_id": reg.get("chat_id"),
+                        "venue_id": reg.get("venue_id"),
+                        "tourn_name": reg.get("tourn_name"),
+                        "is_representative": False,
+                        "teams": user_teams,
+                        "all_teams": teams
+                    })
+            # If admin testing player role has no registered teams anywhere, provide 1 test tournament with a test team
+            if not raw_regs and roster_active:
+                sample_reg = roster_active[0]
+                raw_regs.append({
+                    "sync_req_id": sample_reg.get("sync_req_id"),
+                    "chat_id": sample_reg.get("chat_id"),
+                    "venue_id": sample_reg.get("venue_id"),
+                    "tourn_name": sample_reg.get("tourn_name"),
+                    "is_representative": False,
+                    "teams": [{
+                        "team_name": "Тестовая Команда",
+                        "display_name": "Тестовая Команда",
+                        "user_id": user_id,
+                        "rating_team_id": None,
+                        "town": "Берлин",
+                        "roster": [],
+                        "roster_submitted": False
+                    }],
+                    "all_teams": sample_reg.get("teams", [])
+                })
+        elif active_test_role in ("rep", "representative"):
+            # For representative: ONLY venues where user is actually a representative
+            for reg in roster_active:
+                if datastore.is_user_representative(reg, user_id):
+                    raw_regs.append({
+                        "sync_req_id": reg.get("sync_req_id"),
+                        "chat_id": reg.get("chat_id"),
+                        "venue_id": reg.get("venue_id"),
+                        "tourn_name": reg.get("tourn_name"),
+                        "is_representative": True,
+                        "teams": reg.get("teams", []),
+                        "all_teams": reg.get("teams", [])
+                    })
+            # If admin testing rep role is not a representative on any active tournament,
+            # simulate representative on ONLY the first venue/chat so they see a single venue rep interface
+            if not raw_regs and roster_active:
+                first_reg = roster_active[0]
+                target_venue_id = first_reg.get("venue_id")
+                target_chat_id = first_reg.get("chat_id")
+                for reg in roster_active:
+                    if (target_venue_id and reg.get("venue_id") == target_venue_id) or (reg.get("chat_id") == target_chat_id):
+                        raw_regs.append({
+                            "sync_req_id": reg.get("sync_req_id"),
+                            "chat_id": reg.get("chat_id"),
+                            "venue_id": reg.get("venue_id"),
+                            "tourn_name": reg.get("tourn_name"),
+                            "is_representative": True,
+                            "teams": reg.get("teams", []),
+                            "all_teams": reg.get("teams", [])
+                        })
+        elif is_admin:
+            # For admin: show ALL venues/tournaments where roster collection is enabled
+            for reg in roster_active:
+                raw_regs.append({
+                    "sync_req_id": reg.get("sync_req_id"),
+                    "chat_id": reg.get("chat_id"),
+                    "venue_id": reg.get("venue_id"),
+                    "tourn_name": reg.get("tourn_name"),
+                    "is_representative": True,
+                    "teams": reg.get("teams", []),
+                    "all_teams": reg.get("teams", [])
+                })
+        else:
+            # Real non-admin user:
+            for reg in roster_active:
+                is_rep = datastore.is_user_representative(reg, user_id)
+                teams = reg.get("teams", [])
+                user_teams = [t for t in teams if t.get("user_id") == user_id]
+
+                if is_rep:
+                    raw_regs.append({
+                        "sync_req_id": reg.get("sync_req_id"),
+                        "chat_id": reg.get("chat_id"),
                         "venue_id": reg.get("venue_id"),
                         "tourn_name": reg.get("tourn_name"),
                         "is_representative": True,
                         "teams": teams,
                         "all_teams": teams
                     })
-            except Exception as e:
-                print(f"Error in rep role simulation: {e}")
-                raw_regs = []
-        elif is_admin:
-            try:
-                raw_regs = datastore.get_all_active_registrations()
-                for r in raw_regs:
-                    r["is_representative"] = True
-                    r["all_teams"] = r.get("teams", [])
-            except Exception as e:
-                print(f"Error fetching active registrations: {e}")
-                raw_regs = []
-        else:
-            try:
-                all_active = datastore.get_all_active_registrations()
-                raw_regs = []
-                for reg in all_active:
-                    r_cid = reg.get("chat_id")
-                    if not helpers.get_chat_collect_rosters(r_cid):
-                        continue
-                    
-                    is_rep = datastore.is_user_representative(reg, user_id)
-                    teams = reg.get("teams", [])
-                    user_teams = [t for t in teams if t.get("user_id") == user_id]
-
-                    if is_rep:
-                        raw_regs.append({
-                            "sync_req_id": reg.get("sync_req_id"),
-                            "chat_id": r_cid,
-                            "venue_id": reg.get("venue_id"),
-                            "tourn_name": reg.get("tourn_name"),
-                            "is_representative": True,
-                            "teams": teams,
-                            "all_teams": teams
-                        })
-                    elif user_teams:
-                        for ut in user_teams:
-                            raw_regs.append({
-                                "sync_req_id": reg.get("sync_req_id"),
-                                "chat_id": r_cid,
-                                "venue_id": reg.get("venue_id"),
-                                "tourn_name": reg.get("tourn_name"),
-                                "is_representative": False,
-                                "teams": [ut],
-                                "all_teams": teams
-                            })
-            except Exception as e:
-                print(f"Error fetching user registrations: {e}")
-                raw_regs = []
+                elif user_teams:
+                    raw_regs.append({
+                        "sync_req_id": reg.get("sync_req_id"),
+                        "chat_id": reg.get("chat_id"),
+                        "venue_id": reg.get("venue_id"),
+                        "tourn_name": reg.get("tourn_name"),
+                        "is_representative": False,
+                        "teams": user_teams,
+                        "all_teams": teams
+                    })
 
         tournaments = []
         registrations = []
         seen_keys = set()
         venue_ids = []
 
+        # 2. Fetch monitored_venues once
+        try:
+            monitored_venues = datastore.get_monitored_venues()
+        except Exception as e:
+            print(f"Error fetching monitored_venues: {e}")
+            monitored_venues = {}
+
+        # 3. Fast pass to resolve any missing venue_id
         for reg in raw_regs:
             sync_req_id = reg.get("sync_req_id")
             reg_chat_id = reg.get("chat_id")
             venue_id = reg.get("venue_id")
-            is_rep = bool(reg.get("is_representative") or (is_admin and active_test_role in ("admin", "rep", "representative", None)))
-            if active_test_role == "player":
-                is_rep = False
+            if venue_id and not str(venue_id).strip().isdigit():
+                venue_id = None
 
             if not venue_id and reg_chat_id:
-                try:
-                    monitored = datastore.get_monitored_venues()
-                    for v_id, c_ids in monitored.items():
-                        if str(reg_chat_id) in [str(c) for c in c_ids]:
-                            venue_id = int(v_id) if str(v_id).isdigit() else v_id
-                            break
-                except Exception as e:
-                    print(f"Error resolving venue from monitored_venues: {e}")
+                for v_id, c_ids in monitored_venues.items():
+                    if str(v_id).strip().isdigit() and str(reg_chat_id) in [str(c) for c in c_ids]:
+                        venue_id = int(v_id)
+                        break
 
                 if not venue_id:
-                    try:
-                        c_cfg = datastore.get_chat_config(reg_chat_id)
-                        if c_cfg and c_cfg.get("venues"):
-                            first_v = c_cfg["venues"][0]
-                            venue_id = int(first_v) if str(first_v).isdigit() else first_v
-                    except Exception as e:
-                        print(f"Error resolving venue from chat_config: {e}")
+                    c_cfg = chat_configs_map.get(str(reg_chat_id))
+                    if c_cfg and c_cfg.get("venues"):
+                        for cand in c_cfg["venues"]:
+                            if str(cand).strip().isdigit():
+                                venue_id = int(cand)
+                                break
 
                 if not venue_id and sync_req_id and str(sync_req_id).isdigit():
                     try:
                         sr_details = rating_api.get_sync_request_details(sync_req_id)
-                        if sr_details and sr_details.get("venue_id"):
-                            venue_id = sr_details["venue_id"]
+                        if sr_details and sr_details.get("venue_id") and str(sr_details["venue_id"]).strip().isdigit():
+                            venue_id = int(sr_details["venue_id"])
                     except Exception as e:
                         print(f"Error resolving venue from rating API sync request: {e}")
 
-                # Backfill resolved venue_id into Datastore entity so subsequent requests are instant
-                if venue_id and not reg.get("venue_id"):
+                if venue_id and str(venue_id).strip().isdigit() and not reg.get("venue_id"):
+                    v_val = int(venue_id)
+                    reg["venue_id"] = v_val
                     try:
                         ds_client = datastore.get_datastore_client()
                         ds_key = ds_client.key("TeamRegistration", f"{reg_chat_id}_{sync_req_id}")
                         reg_entity = ds_client.get(ds_key)
                         if reg_entity and not reg_entity.get("venue_id"):
-                            v_val = int(venue_id) if str(venue_id).isdigit() else venue_id
                             reg_entity["venue_id"] = v_val
                             ds_client.put(reg_entity)
-                            reg["venue_id"] = v_val
                     except Exception as e:
                         print(f"Error persisting backfilled venue_id for {sync_req_id}: {e}")
 
+        # 4. Batch pre-fetch all CachedVenue entities in 1 single Datastore call
+        all_candidate_venue_ids = set()
+        for reg in raw_regs:
+            v = reg.get("venue_id")
+            if v and str(v).strip().isdigit():
+                all_candidate_venue_ids.add(int(v))
+            cid = reg.get("chat_id")
+            if cid:
+                c_cfg = chat_configs_map.get(str(cid))
+                if c_cfg and "venues" in c_cfg:
+                    for cvid in c_cfg["venues"]:
+                        if str(cvid).strip().isdigit():
+                            all_candidate_venue_ids.add(int(cvid))
+
+        cached_venues_map = datastore.get_cached_venues_multi(list(all_candidate_venue_ids))
+        chat_titles_cache = {}
+
+        for reg in raw_regs:
+            sync_req_id = reg.get("sync_req_id")
+            reg_chat_id = reg.get("chat_id")
+            venue_id = reg.get("venue_id")
+            is_rep = bool(reg.get("is_representative", False))
+
             if reg_chat_id:
-                try:
-                    c_cfg = datastore.get_chat_config(reg_chat_id)
-                    if c_cfg and "venues" in c_cfg:
-                        for vid in c_cfg["venues"]:
-                            if vid not in venue_ids:
-                                venue_ids.append(vid)
-                except Exception as e:
-                    print(f"Error getting chat config: {e}")
+                c_cfg = chat_configs_map.get(str(reg_chat_id))
+                if c_cfg and "venues" in c_cfg:
+                    for vid in c_cfg["venues"]:
+                        if vid not in venue_ids:
+                            venue_ids.append(vid)
 
             if venue_id and venue_id not in venue_ids:
                 venue_ids.append(venue_id)
 
             venue_info = None
             if venue_id:
-                try:
-                    venue_info = rating_api.get_venue_by_id(venue_id)
-                except Exception as e:
-                    print(f"Error fetching venue info for {venue_id}: {e}")
+                v_key = str(venue_id)
+                if v_key in cached_venues_map:
+                    cached_v = cached_venues_map[v_key]
+                    venue_info = {
+                        "id": cached_v.get("venue_id", venue_id),
+                        "name": cached_v.get("name", ""),
+                        "town": cached_v.get("town", ""),
+                    }
+                else:
+                    try:
+                        venue_info = rating_api.get_venue_by_id(venue_id)
+                    except Exception as e:
+                        print(f"Error fetching venue info for {venue_id}: {e}")
+                        venue_info = {"id": venue_id, "name": f"Площадка #{venue_id}", "town": ""}
 
             chat_title = ""
             if reg_chat_id:
-                try:
-                    chat_title = datastore.get_chat_title(reg_chat_id)
-                except Exception as e:
-                    print(f"Error getting chat title: {e}")
+                cid_str = str(reg_chat_id)
+                if cid_str in chat_titles_cache:
+                    chat_title = chat_titles_cache[cid_str]
+                else:
+                    c_cfg = chat_configs_map.get(cid_str)
+                    if c_cfg and (c_cfg.get("chat_title") or c_cfg.get("title")):
+                        chat_title = str(c_cfg.get("chat_title") or c_cfg.get("title"))
+                    else:
+                        try:
+                            chat_title = datastore.get_chat_title(reg_chat_id)
+                        except Exception as e:
+                            print(f"Error getting chat title: {e}")
+                    chat_titles_cache[cid_str] = chat_title
 
             raw_teams = reg.get("teams", [])
             tourn_name = reg.get("tourn_name", "Турнир")
@@ -451,8 +524,10 @@ def api_miniapp_init():
             ht_dict["town"] = raw_t.get("name", "") if isinstance(raw_t, dict) else (str(raw_t) if raw_t else "")
             hist_teams.append(ht_dict)
 
-        # Real role of the user
-        if is_admin:
+        # Role of the user
+        if is_admin and active_test_role:
+            user_role = active_test_role
+        elif is_admin:
             user_role = "admin"
         elif any(t.get("is_representative") for t in tournaments):
             user_role = "rep"

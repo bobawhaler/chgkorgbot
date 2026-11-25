@@ -59,6 +59,18 @@ class TestVenueDisplayAndCaching(unittest.TestCase):
         self.assertEqual(cached.get("name"), "Берлинский клуб ЧГК")
         self.assertEqual(cached.get("town"), "Берлин")
 
+        # 4. Cache a venue with large payload (> 1500 bytes)
+        large_venue_data = {
+            "id": 3053,
+            "name": "Большой клуб",
+            "town": "Город",
+            "description": "x" * 3000
+        }
+        datastore.cache_venue(3053, large_venue_data)
+        cached_large = datastore.get_cached_venue(3053)
+        self.assertIsNotNone(cached_large)
+        self.assertEqual(cached_large.get("name"), "Большой клуб")
+
     @patch("datastore.get_cached_venue")
     @patch("datastore.cache_venue")
     @patch("requests.get")
@@ -91,6 +103,12 @@ class TestVenueDisplayAndCaching(unittest.TestCase):
         self.assertEqual(res2["name"], "Франкфурт ЧГК")
         self.assertEqual(res2["town"], "Франкфурт-на-Майне")
         mock_cache_venue.assert_called_once()
+
+        # Case C: Non-numeric venue ID (e.g. "RU") -> skips requests.get entirely
+        mock_requests_get.reset_mock()
+        res3 = rating_api.get_venue_by_id("RU")
+        self.assertIsNone(res3)
+        mock_requests_get.assert_not_called()
 
     @patch("datastore.get_datastore_client")
     def test_add_team_registration_saves_venue_id(self, mock_get_ds):
@@ -146,7 +164,7 @@ class TestVenueDisplayAndCaching(unittest.TestCase):
         mock_get_monitored_venues.return_value = {
             "602": ["-100222"]
         }
-        mock_get_chat_config.return_value = {"venues": ["602"]}
+        mock_get_chat_config.return_value = {"venues": ["602"], "collect_rosters": True}
         mock_get_chat_title.side_effect = lambda cid: "ЧГК Берлин" if cid == -100111 else "ЧГК Франкфурт"
 
         def fake_venue(vid):
@@ -210,7 +228,7 @@ class TestVenueDisplayAndCaching(unittest.TestCase):
             }
         ]
         mock_get_monitored_venues.return_value = {}
-        mock_get_chat_config.return_value = {}
+        mock_get_chat_config.return_value = {"collect_rosters": True}
         mock_get_chat_title.return_value = "Гамбург ЧГК"
         mock_get_sync_req_details.return_value = {
             "id": "78901",
@@ -233,6 +251,20 @@ class TestVenueDisplayAndCaching(unittest.TestCase):
         self.assertEqual(t["venue_id"], 888)
         self.assertEqual(t["venue"]["name"], "Гамбург")
         self.assertEqual(t["chat_title"], "Гамбург ЧГК")
+
+    @patch("datastore.get_datastore_client")
+    def test_non_numeric_venue_handling_in_datastore(self, mock_get_ds):
+        mock_get_ds.return_value = self.mock_client
+
+        # None of these should raise ValueError: invalid literal for int()
+        self.assertIsNone(datastore.get_venue_sync_state("RU"))
+        self.assertIsNone(datastore.get_cached_venue("RU"))
+        datastore.save_venue_sync_state("RU", datetime.datetime.now(pytz.utc), ["req1"])
+        datastore.cache_venue("RU", {"name": "Invalid"})
+        self.assertEqual(datastore.get_venue_data("RU"), {"teams": []})
+        self.assertEqual(datastore.get_venue_team_roster("RU", 123), [])
+        self.assertEqual(datastore.get_venues_team_rosters(["RU", "ABC"], 123), [])
+        datastore.update_venue_data_incremental("RU", [{"team_id": 1, "name": "T"}], {})
 
 
 if __name__ == "__main__":

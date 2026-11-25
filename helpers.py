@@ -931,7 +931,7 @@ def trigger_venue_sync(venue_id):
     Triggers background synchronization of a venue.
     Uses Cloud Tasks if configured, or background thread fallback.
     """
-    if not venue_id:
+    if not venue_id or not str(venue_id).strip().isdigit():
         return
     try:
         from google.cloud import tasks_v2

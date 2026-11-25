@@ -98,6 +98,8 @@ def check_and_update_active_sync_requests(monitored_venues):
         return
 
     for venue_id, chat_ids in monitored_venues.items():
+        if not str(venue_id).strip().isdigit():
+            continue
         try:
             upcoming_reqs = rating_api.get_upcoming_sync_requests(venue_id)
         except Exception as e:
@@ -245,6 +247,8 @@ def system_tic_handler():
         
     monitored_venues = datastore.get_monitored_venues()
     for venue_id, chat_ids in monitored_venues.items():
+        if not str(venue_id).strip().isdigit():
+            continue
         sync_reqs = rating_api.get_new_sync_requests(venue_id)
         if not sync_reqs:
             continue
@@ -452,11 +456,103 @@ def system_tic_handler():
         if updated_teams:
             datastore.update_team_registration(reg)
 
+    # Pre-warm MiniApp caches (venues, titles, backfills, suggestions)
+    prewarm_miniapp_caches(monitored_venues, active_regs)
+
     datastore.cleanup_old_cached_tournaments()
     datastore.cleanup_old_cached_team_base(days=14)
     datastore.cleanup_old_cached_team_players(days=14)
     datastore.cleanup_old_chat_commands()
     debug.log("system_tic_handler", t0)
+
+
+def prewarm_miniapp_caches(monitored_venues, active_regs):
+    """
+    Background cron pre-warming for MiniApp:
+    1. Pre-warms CachedVenue for all monitored venues and active tournaments.
+    2. Backfills any missing venue_id in active registrations to Datastore.
+    3. Pre-warms chat_title in ChatConfig for all active tournament chats.
+    4. Triggers background sync for any venue that lacks VenueData.
+    """
+    try:
+        candidate_venue_ids = set()
+        for v in (monitored_venues or {}).keys():
+            if str(v).strip().isdigit():
+                candidate_venue_ids.add(int(v))
+
+        for reg in (active_regs or []):
+            v_id = reg.get("venue_id")
+            if v_id and not str(v_id).strip().isdigit():
+                v_id = None
+            c_id = reg.get("chat_id")
+            s_id = reg.get("sync_req_id")
+
+            # Resolve venue_id if missing
+            if not v_id and c_id:
+                for mv_id, c_ids in (monitored_venues or {}).items():
+                    if str(mv_id).strip().isdigit() and str(c_id) in [str(c) for c in c_ids]:
+                        v_id = int(mv_id)
+                        break
+                if not v_id:
+                    cfg = datastore.get_chat_config(c_id)
+                    if cfg and cfg.get("venues"):
+                        for cand in cfg["venues"]:
+                            if str(cand).strip().isdigit():
+                                v_id = int(cand)
+                                break
+
+                if not v_id and s_id and str(s_id).isdigit():
+                    try:
+                        sr = rating_api.get_sync_request_details(s_id)
+                        if sr and sr.get("venue_id") and str(sr["venue_id"]).strip().isdigit():
+                            v_id = int(sr["venue_id"])
+                    except Exception:
+                        pass
+
+                if v_id and str(v_id).strip().isdigit():
+                    v_val = int(v_id)
+                    reg["venue_id"] = v_val
+                    try:
+                        ds_client = datastore.get_datastore_client()
+                        ds_key = ds_client.key("TeamRegistration", f"{c_id}_{s_id}")
+                        reg_entity = ds_client.get(ds_key)
+                        if reg_entity and not reg_entity.get("venue_id"):
+                            reg_entity["venue_id"] = v_val
+                            ds_client.put(reg_entity)
+                    except Exception as e:
+                        print(f"Error persisting prewarmed venue_id for {s_id}: {e}")
+
+            if v_id:
+                candidate_venue_ids.add(v_id)
+
+            # Pre-warm chat_title if missing in ChatConfig
+            if c_id:
+                try:
+                    c_cfg = datastore.get_chat_config(c_id)
+                    if not (c_cfg and (c_cfg.get("chat_title") or c_cfg.get("title"))):
+                        datastore.get_chat_title(c_id)
+                except Exception:
+                    pass
+
+        # Pre-warm CachedVenue for all candidate venues (if missing or older than 7 days)
+        for vid in candidate_venue_ids:
+            try:
+                cv = datastore.get_cached_venue(vid, max_age_days=7)
+                if not cv:
+                    rating_api.get_venue_by_id(vid)
+            except Exception as e:
+                print(f"Error prewarming venue {vid}: {e}")
+
+            # Check if VenueData exists for this venue; if not, trigger sync
+            try:
+                v_data = datastore.get_venue_data(vid)
+                if not v_data or not v_data.get("teams"):
+                    helpers.trigger_venue_sync(vid)
+            except Exception as e:
+                print(f"Error checking VenueData for {vid}: {e}")
+
+    except Exception as exc:
+        print(f"Error in prewarm_miniapp_caches: {exc}")
 
 
 def handle_callback_query(cq):

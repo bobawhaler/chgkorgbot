@@ -1211,7 +1211,7 @@
       await loadInitData(true, role);
     }
 
-    async function loadInitData(manual = false, overrideRole = null) {
+    async function loadInitData(manual = false, overrideRole = null, attempt = 1) {
       const tournamentsListEl = document.getElementById("tournamentsList");
       
       const updateStatus = (text) => {
@@ -1219,7 +1219,7 @@
         if (el) el.innerText = text;
       };
 
-      if (tournamentsListEl) {
+      if (tournamentsListEl && attempt === 1) {
         tournamentsListEl.innerHTML = `
           <div class="empty-state">
             <div class="spinner"></div>
@@ -1229,7 +1229,18 @@
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 12000);
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const statusTimers = [
+        setTimeout(() => updateStatus("Сервер запускается, пожалуйста, подождите..."), 3500),
+        setTimeout(() => updateStatus("Загрузка списка турниров и площадок..."), 9000),
+        setTimeout(() => updateStatus("Почти готово, обрабатываем данные..."), 18000)
+      ];
+
+      const clearAllTimers = () => {
+        clearTimeout(timeoutId);
+        statusTimers.forEach(t => clearTimeout(t));
+      };
 
       try {
         const initDataRaw = tg?.initData || "";
@@ -1239,7 +1250,7 @@
 
         const userNick = unsafeUser?.username ? `@${unsafeUser.username}` : (unsafeUser?.first_name ? [unsafeUser.first_name, unsafeUser.last_name].filter(Boolean).join(" ") : "");
         const userSuffix = userNick ? ` (${userNick})` : "";
-        updateStatus(`Запрос данных с сервера${userSuffix}...`);
+        updateStatus(attempt > 1 ? `Повторное подключение к серверу${userSuffix}...` : `Запрос данных с сервера${userSuffix}...`);
 
         const resp = await fetch("/api/miniapp/init", {
           method: "POST",
@@ -1252,6 +1263,7 @@
           })
         });
 
+        clearAllTimers();
         updateStatus("Получен ответ. Чтение данных...");
         
         let data;
@@ -1325,8 +1337,18 @@
         checkAndOpenStartParam();
         if (manual) showToast("Данные обновлены");
       } catch (err) {
+        clearAllTimers();
         console.error("loadInitData error:", err);
-        const errorMsg = err.name === "AbortError" ? "Превышено время ожидания ответа сервера (таймаут 12 сек)" : err.message;
+        
+        // Auto-retry once on network failure or abort
+        if (attempt === 1 && (err.name === "AbortError" || err.message?.includes("fetch") || err.message?.includes("Network"))) {
+          console.warn("Auto-retrying loadInitData after initial failure...");
+          updateStatus("Повторная попытка подключения...");
+          await new Promise(r => setTimeout(r, 600));
+          return await loadInitData(manual, overrideRole, attempt + 1);
+        }
+
+        const errorMsg = err.name === "AbortError" ? "Превышено время ожидания ответа сервера (таймаут 30 сек)" : err.message;
         if (tournamentsListEl) {
           tournamentsListEl.innerHTML = `
             <div class="empty-state">
@@ -1338,7 +1360,7 @@
           `;
         }
       } finally {
-        clearTimeout(timeoutId);
+        clearAllTimers();
       }
     }
 
